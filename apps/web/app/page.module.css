@@ -18,6 +18,7 @@
 
 .eyebrow { color: #315c9b; font-weight: 700; margin: 0; }
 .disclaimer { color: #4c596e; }
+.clearProfile { background: transparent; border: 0; color: #315c9b; cursor: pointer; padding: 0; text-decoration: underline; }
 .form { display: grid; gap: .5rem; }
 .form label { font-weight: 700; margin-top: .5rem; }
 .form textarea, .form select, .form button, .dialog button { font: inherit; padding: .75rem; }

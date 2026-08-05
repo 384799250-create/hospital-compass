@@ -62,6 +62,7 @@ describe('patient matching page', () => {
       directions: ['心血管内科'],
       score_version: 'demo-v1',
       results: [{
+        id: 'demo-1',
         name: '示例市中心医院',
         city: '上海',
         demo_label: '演示数据',
@@ -80,5 +81,18 @@ describe('patient matching page', () => {
     expect(await screen.findByText('心血管内科')).not.toBeNull();
     expect(screen.getByText('专科方向匹配；来源信息在有效期内')).not.toBeNull();
     expect(screen.getByText('2026-07-26')).not.toBeNull();
+  });
+
+  it('clears browser-local profile data on request', async () => {
+    localStorage.setItem('hospital-compass-profile', JSON.stringify({
+      favorites: ['demo-1'],
+      history: ['Hospital directory'],
+    }));
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.click(screen.getByRole('button', { name: 'Clear local data' }));
+
+    expect(localStorage.getItem('hospital-compass-profile')).toBeNull();
   });
 });

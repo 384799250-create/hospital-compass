@@ -3,6 +3,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import { MatchApiError, MatchResponse, matchHospitals } from '../lib/api';
+import { clearProfile } from '../lib/local-profile';
 import styles from './page.module.css';
 
 const FALLBACK_COPY = '匹配服务暂时不可用。请查询当地卫生健康部门地址与医院官方站点；如情况紧急，请立即急诊或拨打 120。';
@@ -61,6 +62,10 @@ export default function Page() {
     queueMicrotask(() => submitButtonRef.current?.focus());
   }
 
+  function clearLocalData() {
+    clearProfile();
+  }
+
   function trapEmergencyFocus(event: KeyboardEvent<HTMLDialogElement>) {
     if (event.key === 'Tab') {
       event.preventDefault();
@@ -76,6 +81,7 @@ export default function Page() {
         <p className={styles.eyebrow}>医疗信息导航</p>
         <h1 id="page-title">医院信息匹配</h1>
         <p className={styles.disclaimer}>本工具仅供查找演示医院信息，不提供诊断、治疗或疗效建议。</p>
+        <button type="button" className={styles.clearProfile} onClick={clearLocalData}>Clear local data</button>
 
         <form onSubmit={submit} className={styles.form}>
           <label htmlFor="query">症状或疾病</label>

@@ -1,4 +1,5 @@
 export type MatchResult = {
+  id: string;
   name: string;
   city: string;
   demo_label: string;

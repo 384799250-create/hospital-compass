@@ -1,11 +1,12 @@
 import logging
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.matcher import match
+from app.data import DEMO_HOSPITALS
 from app.schemas import MatchRequest
 
 logger = logging.getLogger(__name__)
@@ -40,3 +41,27 @@ async def health():
 @app.post('/v1/matches')
 async def matches(request: MatchRequest):
     return match(request.query, request.city, request.priority)
+
+
+@app.get('/v1/hospitals/{hospital_id}')
+async def hospital_detail(hospital_id: str):
+    hospital = next(
+        (item for item in DEMO_HOSPITALS if item.id == hospital_id and item.published),
+        None,
+    )
+    if hospital is None:
+        raise HTTPException(status_code=404, detail='Hospital not found')
+
+    return {
+        'id': hospital.id,
+        'name': hospital.name,
+        'city': hospital.city,
+        'address': hospital.address,
+        'official_url': hospital.official_url,
+        'specialties': list(hospital.specialties),
+        'source': {
+            'label': hospital.demo_label,
+            'url': hospital.source_url,
+            'date': hospital.source_date.isoformat(),
+        },
+    }

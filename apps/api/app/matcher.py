@@ -17,6 +17,7 @@ WEIGHTS = {
 
 
 class MatchResult(BaseModel):
+    id: str
     name: str
     city: str
     demo_label: str
@@ -52,6 +53,7 @@ def match(query: str, city: str | None, priority: Literal['overall', 'specialty'
         score_version=SCORE_VERSION,
         results=[
             MatchResult(
+                id=hospital.id,
                 name=hospital.name,
                 city=hospital.city,
                 demo_label=hospital.demo_label,
