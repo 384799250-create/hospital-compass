@@ -87,53 +87,47 @@ export default function Page() {
   }
 
   const recommendations = response && !response.emergency ? response.results : [];
+  const hasNoMatches = response && !response.emergency && response.results.length === 0;
 
   return (
     <main className={styles.page} inert={showEmergency}>
-      <section className={styles.search} aria-labelledby="page-title">
-        <p className={styles.eyebrow}>医疗信息导航</p>
-        <h1 id="page-title">医院信息匹配</h1>
-        <p className={styles.disclaimer}>本工具仅供查找演示医院信息，不提供诊断、治疗或疗效建议。</p>
+      <nav className={styles.nav} aria-label="主导航">
+        <span className={styles.brand}>医途</span>
+        <span>医院信息导航</span>
         <button type="button" className={styles.clearProfile} onClick={clearLocalData}>Clear local data</button>
+      </nav>
 
+      <section className={styles.hero} aria-labelledby="page-title">
+        <div className={styles.heroCopy}>
+          <p className={styles.eyebrow}>演示医院信息匹配</p>
+          <h1 id="page-title">找到更适合的医院信息</h1>
+          <p className={styles.disclaimer}>本工具仅供查找演示医院信息，不提供诊断、治疗或疗效建议。</p>
+        </div>
+        <div className={styles.artwork} aria-hidden="true"><i /><b /><em /></div>
+      </section>
+
+      <section className={styles.search} aria-label="医院信息匹配">
+        <div className={styles.panelHeading}><span>01</span><h2>告诉我们你的需求</h2></div>
         <form onSubmit={submit} className={styles.form}>
           <label htmlFor="query">症状或疾病</label>
-          <textarea
-            id="query"
-            name="query"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            required
-            maxLength={500}
-            rows={3}
-          />
-
+          <textarea id="query" name="query" value={query} onChange={(event) => setQuery(event.target.value)} required maxLength={500} rows={3} />
           <label htmlFor="city">所在城市</label>
-          <select id="city" name="city" value={city} onChange={(event) => setCity(event.target.value)}>
-            <option value="">不限城市</option>
-            <option value="上海">上海</option>
-            <option value="杭州">杭州</option>
-          </select>
-
+          <select id="city" name="city" value={city} onChange={(event) => setCity(event.target.value)}><option value="">不限城市</option><option value="上海">上海</option><option value="杭州">杭州</option></select>
           <label htmlFor="priority">匹配偏好</label>
-          <select id="priority" name="priority" value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}>
-            <option value="overall">综合信息</option>
-            <option value="specialty">专科方向</option>
-            <option value="convenience">就近便利</option>
-          </select>
-
+          <select id="priority" name="priority" value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}><option value="overall">综合信息</option><option value="specialty">专科方向</option><option value="convenience">就近便利</option></select>
           <button ref={submitButtonRef} type="submit" disabled={loading}>{loading ? '匹配中…' : '开始匹配'}</button>
         </form>
       </section>
 
       {error && <p className={styles.notice} role="alert">{error}</p>}
 
-      {recommendations.length > 0 && (
+      {(recommendations.length > 0 || hasNoMatches) && (
         <section aria-labelledby="recommendations-title" className={styles.results}>
-          <h2 id="recommendations-title">推荐医院</h2>
+          <header className={styles.resultHeader}><div><span>02</span><h2 id="recommendations-title">匹配结果</h2></div><p>{recommendations.length > 0 ? '推荐医院' : '继续探索其他方向'}</p></header>
           <p>以下为演示数据生成的信息匹配结果，请通过官方渠道核实。</p>
-          <p className={styles.localOnly}>收藏仅保存在此浏览器中。</p>
-          <div className={styles.cards}>
+          {recommendations.length > 0 && <p className={styles.localOnly}>收藏仅保存在此浏览器中。</p>}
+          {hasNoMatches && <article className={styles.noMatch}><div className={styles.mapPanel} aria-hidden="true"><span /><i /><b /></div><div><h3>暂未匹配到已审核医院</h3><p>可尝试补充更具体的症状、所在城市或匹配偏好。请通过官方渠道查询医院信息。</p></div></article>}
+          {recommendations.length > 0 && <div className={styles.cards}>
             {recommendations.map((hospital) => (
               <article className={styles.card} key={hospital.id}>
                 <h3>{hospital.name}</h3>
@@ -155,7 +149,7 @@ export default function Page() {
                 </button>
               </article>
             ))}
-          </div>
+          </div>}
         </section>
       )}
 

@@ -21,6 +21,22 @@ describe('patient matching page', () => {
     vi.restoreAllMocks();
   });
 
+  function mockMatch(response: Awaited<ReturnType<typeof matchHospitals>>) {
+    vi.mocked(matchHospitals).mockResolvedValue(response);
+  }
+
+  it('renders the branded hero and a visible no-match card', async () => {
+    mockMatch({ emergency: false, directions: [], score_version: 'demo-v1', results: [] });
+    const user = userEvent.setup();
+
+    render(<Page />);
+    expect(screen.getByText('医途')).not.toBeNull();
+    await user.type(screen.getByLabelText('症状或疾病'), '未收录疾病');
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(await screen.findByText('暂未匹配到已审核医院')).not.toBeNull();
+  });
+
   it('interrupts hospital recommendations for an emergency response', async () => {
     vi.mocked(matchHospitals).mockResolvedValue({
       emergency: true,
