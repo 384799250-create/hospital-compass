@@ -8,7 +8,7 @@ Every displayed hospital record is labelled **DEMO DATA**. The records are in-me
 
 ## Start locally
 
-Use Python 3.12+ and Node.js 22.22.2+ (or 24.15.0+). From the repository root, install the API and development dependencies in one terminal, then start it on `127.0.0.1:8000`:
+Use Python 3.12+ and a supported Node.js release: `^22.22.2 || ^24.15.0 || >=26.0.0`. From the repository root, install the API and development dependencies in one terminal, then start it on `127.0.0.1:8000`:
 
 ```powershell
 cd apps/api
