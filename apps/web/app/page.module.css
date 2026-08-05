@@ -13,7 +13,7 @@
 .brand { color: #173B38; font-size: 1.2rem; font-weight: 800; letter-spacing: -.08em; margin-right: auto; }
 .hero { align-items: center; background: #D8EFE7; border-radius: 1.5rem; display: grid; grid-template-columns: 1.25fr .75fr; margin-top: 1rem; min-height: 17rem; overflow: hidden; padding: clamp(1.75rem, 6vw, 4rem); position: relative; }
 .heroCopy { max-width: 36rem; position: relative; z-index: 1; }
-.eyebrow { color: #28766e; font-size: .8rem; font-weight: 800; letter-spacing: .12em; margin: 0; text-transform: uppercase; }
+.eyebrow { color: #21635b; font-size: .8rem; font-weight: 800; letter-spacing: .12em; margin: 0; text-transform: uppercase; }
 .hero h1 { font-size: clamp(2.25rem, 6vw, 4.75rem); letter-spacing: -.07em; line-height: .98; margin: .55rem 0 1rem; }
 .disclaimer { color: #315c57; line-height: 1.65; max-width: 35rem; }
 .artwork { height: 100%; min-height: 12rem; position: relative; }
@@ -26,7 +26,7 @@
 .search, .results, .notice, .dialog { background: #fffdf8; border: 1px solid rgb(23 59 56 / 10%); border-radius: 1.25rem; box-shadow: 0 16px 45px rgb(23 59 56 / 8%); padding: clamp(1.25rem, 4vw, 2.25rem); }
 .search { margin-top: -1.25rem; position: relative; z-index: 2; }
 .panelHeading, .resultHeader, .resultHeader > div { align-items: center; display: flex; gap: .75rem; }
-.panelHeading span, .resultHeader span { color: #55B8AB; font-size: .75rem; font-weight: 800; letter-spacing: .1em; }
+.panelHeading span, .resultHeader span { color: #28766e; font-size: .75rem; font-weight: 800; letter-spacing: .1em; }
 .panelHeading h2, .resultHeader h2 { font-size: 1.35rem; letter-spacing: -.04em; margin: 0; }
 .resultHeader { justify-content: space-between; }
 .resultHeader > p { color: #28766e; font-weight: 700; margin: 0; }
@@ -35,7 +35,7 @@
 .form { display: grid; gap: .6rem; margin-top: 1.25rem; }
 .form label { font-weight: 750; margin-top: .4rem; }
 .form textarea, .form select, .form button, .dialog button { border: 1px solid #b6d7cf; border-radius: .65rem; font: inherit; padding: .8rem .9rem; }
-.form textarea:focus, .form select:focus, button:focus-visible { outline: 3px solid #ED806D; outline-offset: 2px; }
+.form textarea:focus, .form select:focus, button:focus-visible { outline: 3px solid #A94338; outline-offset: 2px; }
 .form button, .dialog button { background: #173B38; border: 0; color: #fff; cursor: pointer; font-weight: 750; margin-top: .75rem; }
 .form button:disabled { cursor: wait; opacity: .65; }
 .notice, .results { margin-top: 1rem; }
