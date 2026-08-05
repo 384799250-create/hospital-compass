@@ -66,7 +66,10 @@ def _weights_for(priority: str, city: str | None) -> tuple[int, int, int, int]:
 
 
 def _is_eligible(hospital: DemoHospital) -> bool:
-    return hospital.published and hospital.verified and (date.today() - hospital.source_date).days <= SOURCE_MAX_AGE_DAYS
+    if not hospital.published or not hospital.verified or type(hospital.source_date) is not date:
+        return False
+    source_age_days = (date.today() - hospital.source_date).days
+    return 0 <= source_age_days <= SOURCE_MAX_AGE_DAYS
 
 
 def _score(

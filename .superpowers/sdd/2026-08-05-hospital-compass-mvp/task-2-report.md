@@ -49,3 +49,34 @@ Implementation commit: `3f079c1d70eb326183fb3bf4363aa432bc179c08` (`feat: add de
 ## Concerns
 
 - The hospital records are intentionally minimal in-memory demo data. A production data source would need independently verified data refresh and expiry handling.
+
+## Review fix report
+
+### Changes
+
+- Invalid, missing, and future `source_date` values are now ineligible before scoring or sorting.
+- The source age check explicitly requires a `date` and accepts only the inclusive range 0–180 days, preventing freshness values above 100.
+- Tests now cover all requested filters, no-city redistribution for all three priorities, exact missing-field scoring, and freshness/pinyin tie breaks.
+
+### Focused TDD commands and results
+
+Red command (run from `apps/api`):
+
+```text
+python -m pytest tests/test_matcher.py -v
+```
+
+Result: 3 failed and 10 passed. Missing and malformed `source_date` values raised `TypeError` in `_is_eligible`; a future date incorrectly produced a result with score `97.5556`.
+
+Green commands (run from `apps/api`):
+
+```text
+python -m pytest tests/test_matcher.py -v
+python -m pytest -v
+```
+
+Results: focused matcher suite passed `13 passed in 0.28s`; full API suite passed `15 passed in 0.40s`.
+
+### Remaining concern
+
+- Source validation treats `datetime` values as invalid rather than silently converting them, so data-ingestion code must normalize timestamps to calendar dates before calling the matcher.
