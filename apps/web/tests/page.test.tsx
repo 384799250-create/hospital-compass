@@ -1,0 +1,48 @@
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import Page from '../app/page';
+import { MatchApiError, matchHospitals } from '../lib/api';
+
+vi.mock('../lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/api')>()),
+  matchHospitals: vi.fn(),
+}));
+
+describe('patient matching page', () => {
+  beforeEach(() => {
+    vi.mocked(matchHospitals).mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it('interrupts hospital recommendations for an emergency response', async () => {
+    vi.mocked(matchHospitals).mockResolvedValue({
+      emergency: true,
+      directions: [],
+      score_version: 'demo-v1',
+      results: [],
+    });
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '突发胸痛');
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(await screen.findByText('请立即急诊或拨打 120')).not.toBeNull();
+    expect(screen.queryByText('推荐医院')).toBeNull();
+  });
+
+  it('shows official-source fallback copy when matching is unavailable', async () => {
+    vi.mocked(matchHospitals).mockRejectedValue(new MatchApiError(503));
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '胸痛');
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(await screen.findByText(/当地卫生健康部门地址与医院官方站点/)).not.toBeNull();
+    expect(screen.queryByText('推荐医院')).toBeNull();
+  });
+});

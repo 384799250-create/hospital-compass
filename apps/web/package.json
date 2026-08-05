@@ -1,0 +1,17 @@
+{
+  "name": "hospital-compass-web",
+  "private": true,
+  "scripts": {
+    "test": "vitest --environment jsdom"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "@testing-library/react": "latest",
+    "@testing-library/user-event": "latest",
+    "jsdom": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vitest": "latest"
+  },
+  "devDependencies": {}
+}
