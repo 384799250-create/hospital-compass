@@ -1,18 +1,30 @@
 {
   "name": "hospital-compass-web",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.14.0 || >=24.0.0"
+  },
   "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "start": "vite preview --host 127.0.0.1",
     "build": "vite build",
-    "test": "vitest --environment jsdom"
+    "test": "vitest --environment jsdom",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "@testing-library/react": "latest",
-    "@testing-library/user-event": "latest",
-    "jsdom": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "vitest": "latest"
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "jsdom": "30.0.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.0",
+    "vitest": "4.1.10"
+  }
 }

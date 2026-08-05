@@ -13,9 +13,13 @@ vi.mock('../lib/api', async (importOriginal) => ({
 describe('patient matching page', () => {
   beforeEach(() => {
     vi.mocked(matchHospitals).mockReset();
+    localStorage.clear();
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
 
   it('interrupts hospital recommendations for an emergency response', async () => {
     vi.mocked(matchHospitals).mockResolvedValue({
@@ -94,5 +98,70 @@ describe('patient matching page', () => {
     await user.click(screen.getByRole('button', { name: 'Clear local data' }));
 
     expect(localStorage.getItem('hospital-compass-profile')).toBeNull();
+  });
+
+  it('offers an accessible local-only favorite toggle and restores its state', async () => {
+    vi.mocked(matchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: ['心血管内科'],
+      score_version: 'demo-v1',
+      results: [{
+        id: 'demo-1',
+        name: '示例市中心医院',
+        city: '上海',
+        demo_label: 'DEMO DATA',
+        score: 91.25,
+        specialties: ['心血管内科'],
+        score_reasons: ['专科方向匹配'],
+        source_date: '2026-07-26',
+      }],
+    });
+    const user = userEvent.setup();
+
+    const { unmount } = render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '冠心病');
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+    const favorite = await screen.findByRole('button', { name: '收藏 示例市中心医院' });
+
+    expect(favorite.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('收藏仅保存在此浏览器中。')).not.toBeNull();
+    await user.click(favorite);
+    expect(favorite.getAttribute('aria-pressed')).toBe('true');
+    expect(localStorage.getItem('hospital-compass-profile')).toBe(JSON.stringify({ favorites: ['demo-1'] }));
+
+    unmount();
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '冠心病');
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+    expect((await screen.findByRole('button', { name: '取消收藏 示例市中心医院' })).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('never persists the submitted symptom while exercising local persistence', async () => {
+    const symptomQuery = 'private symptom phrase';
+    const writes: string[] = [];
+    const setItem = Storage.prototype.setItem;
+    const storageSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      writes.push(`${key}:${value}`);
+      return setItem.call(this, key, value);
+    });
+    vi.mocked(matchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: ['心血管内科'],
+      score_version: 'demo-v1',
+      results: [{
+        id: 'demo-1', name: '示例市中心医院', city: '上海', demo_label: 'DEMO DATA', score: 1,
+        specialties: ['心血管内科'], score_reasons: ['专科方向匹配'], source_date: '2026-07-26',
+      }],
+    });
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), symptomQuery);
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+    await user.click(await screen.findByRole('button', { name: '收藏 示例市中心医院' }));
+
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes.join('\n')).not.toContain(symptomQuery);
+    storageSpy.mockRestore();
   });
 });

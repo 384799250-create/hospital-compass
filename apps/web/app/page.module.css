@@ -19,6 +19,7 @@
 .eyebrow { color: #315c9b; font-weight: 700; margin: 0; }
 .disclaimer { color: #4c596e; }
 .clearProfile { background: transparent; border: 0; color: #315c9b; cursor: pointer; padding: 0; text-decoration: underline; }
+.localOnly { color: #4c596e; font-size: .9rem; }
 .form { display: grid; gap: .5rem; }
 .form label { font-weight: 700; margin-top: .5rem; }
 .form textarea, .form select, .form button, .dialog button { font: inherit; padding: .75rem; }
@@ -33,6 +34,8 @@
 .card dl div { margin-top: .75rem; }
 .card dt { color: #4c596e; font-weight: 700; }
 .card dd { margin: .2rem 0 0; }
+.favorite { background: #fff; border: 1px solid #195bba; border-radius: .4rem; color: #195bba; cursor: pointer; font: inherit; margin-top: 1rem; padding: .6rem .85rem; }
+.favorite[aria-pressed="true"] { background: #195bba; color: #fff; }
 .dialog { border: 0; max-width: 28rem; }
 .dialog::backdrop { background: rgb(0 0 0 / 55%); }
 

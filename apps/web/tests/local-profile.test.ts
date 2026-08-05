@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import * as localProfile from '../lib/local-profile';
 import {
   addFavorite,
   clearProfile,
@@ -11,12 +10,19 @@ import {
 describe('local profile', () => {
   beforeEach(() => localStorage.clear());
 
-  it('never writes symptom-like text to local storage', () => {
-    const symptomQuery = 'sudden chest pain';
+  it('discards malformed and non-hospital favorite IDs when reading storage', () => {
+    localStorage.setItem('hospital-compass-profile', JSON.stringify({
+      favorites: ['demo-1', ' sudden chest pain ', '../demo-2', '', 42],
+    }));
 
-    (localProfile as { rememberSearch?: (query: string) => void }).rememberSearch?.(symptomQuery);
+    expect(getProfile()).toEqual({ favorites: ['demo-1'] });
+  });
 
-    expect(localStorage.getItem('hospital-compass-profile') ?? '').not.toContain(symptomQuery);
+  it('does not persist an invalid favorite ID', () => {
+    addFavorite('sudden chest pain');
+
+    expect(getProfile()).toEqual({ favorites: [] });
+    expect(localStorage.getItem('hospital-compass-profile')).toBeNull();
   });
 
   it('stores only hospital IDs as favorites and can remove them', () => {

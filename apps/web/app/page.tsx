@@ -3,7 +3,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import { MatchApiError, MatchResponse, matchHospitals } from '../lib/api';
-import { clearProfile } from '../lib/local-profile';
+import { addFavorite, clearProfile, getProfile, removeFavorite } from '../lib/local-profile';
 import styles from './page.module.css';
 
 const FALLBACK_COPY = '匹配服务暂时不可用。请查询当地卫生健康部门地址与医院官方站点；如情况紧急，请立即急诊或拨打 120。';
@@ -16,9 +16,14 @@ export default function Page() {
   const [showEmergency, setShowEmergency] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const acknowledgementRef = useRef<HTMLButtonElement>(null);
   const emergencyDialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    setFavorites(getProfile().favorites);
+  }, []);
 
   useEffect(() => {
     if (!showEmergency) return;
@@ -64,6 +69,14 @@ export default function Page() {
 
   function clearLocalData() {
     clearProfile();
+    setFavorites([]);
+  }
+
+  function toggleFavorite(hospitalId: string) {
+    const profile = favorites.includes(hospitalId)
+      ? removeFavorite(hospitalId)
+      : addFavorite(hospitalId);
+    setFavorites(profile.favorites);
   }
 
   function trapEmergencyFocus(event: KeyboardEvent<HTMLDialogElement>) {
@@ -119,9 +132,10 @@ export default function Page() {
         <section aria-labelledby="recommendations-title" className={styles.results}>
           <h2 id="recommendations-title">推荐医院</h2>
           <p>以下为演示数据生成的信息匹配结果，请通过官方渠道核实。</p>
+          <p className={styles.localOnly}>收藏仅保存在此浏览器中。</p>
           <div className={styles.cards}>
             {recommendations.map((hospital) => (
-              <article className={styles.card} key={`${hospital.name}-${hospital.city}`}>
+              <article className={styles.card} key={hospital.id}>
                 <h3>{hospital.name}</h3>
                 <p>{hospital.city} · {hospital.demo_label || '演示数据'}</p>
                 <dl>
@@ -130,6 +144,15 @@ export default function Page() {
                   <div><dt>分数说明</dt><dd>{hospital.score_reasons.join('；')}</dd></div>
                   <div><dt>来源日期</dt><dd>{hospital.source_date}</dd></div>
                 </dl>
+                <button
+                  type="button"
+                  className={styles.favorite}
+                  aria-pressed={favorites.includes(hospital.id)}
+                  aria-label={`${favorites.includes(hospital.id) ? '取消收藏' : '收藏'} ${hospital.name}`}
+                  onClick={() => toggleFavorite(hospital.id)}
+                >
+                  {favorites.includes(hospital.id) ? '已收藏' : '收藏'}
+                </button>
               </article>
             ))}
           </div>

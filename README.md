@@ -8,21 +8,25 @@ Every displayed hospital record is labelled **DEMO DATA**. The records are in-me
 
 ## Start locally
 
-From `apps/api`, install the project dependencies and start the API:
+Use Python 3.12+ and Node.js 22.14+ (or 24+). From the repository root, install the API and development dependencies in one terminal, then start it on `127.0.0.1:8000`:
 
 ```powershell
-python -m pip install -e .
-python -m uvicorn app.main:app --reload
+cd apps/api
+python -m pip install -e ".[dev]"
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-From `apps/web`, install dependencies and run the web unit suite:
+In a second terminal, install the locked web dependencies and start the Vite development server on `127.0.0.1:5173`:
 
 ```powershell
-npm install
-npm test
+cd apps/web
+npm ci
+npm run dev
 ```
 
-The web component is designed to call `/v1/matches` and can be served by the application host used for the deployment.
+Open `http://127.0.0.1:5173`. Vite proxies `/v1/*` and `/health` to the API, so the browser uses same-origin requests during local development.
+
+To check the production bundle locally, run `npm run build` followed by `npm start`; the preview server listens on `127.0.0.1:4173` and uses the same API proxy. Run `npm test -- --run` and `npm run typecheck` for the web verification gates.
 
 ## Privacy and local data
 

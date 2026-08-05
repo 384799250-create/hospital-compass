@@ -4,13 +4,18 @@ export type LocalProfile = {
 
 const PROFILE_KEY = 'hospital-compass-profile';
 const EMPTY_PROFILE: LocalProfile = { favorites: [] };
+const HOSPITAL_ID_PATTERN = /^demo-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+
+function isHospitalId(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 64 && HOSPITAL_ID_PATTERN.test(value);
+}
 
 function readProfile(): LocalProfile {
   try {
     const parsed = JSON.parse(localStorage.getItem(PROFILE_KEY) ?? 'null') as Partial<LocalProfile> | null;
     if (!parsed || !Array.isArray(parsed.favorites)) return { ...EMPTY_PROFILE };
     return {
-      favorites: parsed.favorites.filter((id): id is string => typeof id === 'string'),
+      favorites: [...new Set(parsed.favorites.filter(isHospitalId))],
     };
   } catch {
     return { ...EMPTY_PROFILE };
@@ -28,10 +33,11 @@ export function getProfile(): LocalProfile {
 
 export function addFavorite(hospitalId: string): LocalProfile {
   const profile = readProfile();
-  const favorite = hospitalId.trim();
+  if (!isHospitalId(hospitalId)) return profile;
+
   return saveProfile({
     ...profile,
-    favorites: favorite && !profile.favorites.includes(favorite) ? [...profile.favorites, favorite] : profile.favorites,
+    favorites: profile.favorites.includes(hospitalId) ? profile.favorites : [...profile.favorites, hospitalId],
   });
 }
 

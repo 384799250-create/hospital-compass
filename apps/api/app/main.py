@@ -1,7 +1,8 @@
 import logging
+from datetime import date
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -11,6 +12,11 @@ from app.schemas import MatchRequest
 
 logger = logging.getLogger(__name__)
 app = FastAPI()
+
+
+def current_date() -> date:
+    """Clock boundary for source-freshness checks."""
+    return date.today()
 
 
 @app.middleware('http')
@@ -39,14 +45,18 @@ async def health():
 
 
 @app.post('/v1/matches')
-async def matches(request: MatchRequest):
-    return match(request.query, request.city, request.priority)
+async def matches(request: MatchRequest, as_of: date = Depends(current_date)):
+    return match(request.query, request.city, request.priority, as_of=as_of)
 
 
 @app.get('/v1/hospitals/{hospital_id}')
-async def hospital_detail(hospital_id: str):
+async def hospital_detail(hospital_id: str, as_of: date = Depends(current_date)):
     hospital = next(
-        (item for item in DEMO_HOSPITALS if item.id == hospital_id and is_public_record(item)),
+        (
+            item
+            for item in DEMO_HOSPITALS
+            if item.id == hospital_id and is_public_record(item, as_of=as_of)
+        ),
         None,
     )
     if hospital is None:

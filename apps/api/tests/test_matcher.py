@@ -6,23 +6,53 @@ from app.data import DEMO_HOSPITALS
 from app.matcher import match
 import pytest
 
+AS_OF = date(2026, 8, 5)
+
 
 def test_emergency_query_has_no_results():
-    response = match('突发胸痛并呼吸困难', None, 'overall')
+    response = match('突发胸痛并呼吸困难', None, 'overall', as_of=AS_OF)
 
     assert response.emergency is True
     assert response.results == []
 
 
 def test_specialty_sort_is_deterministic():
-    response = match('冠心病', '上海', 'specialty')
+    response = match('冠心病', '上海', 'specialty', as_of=AS_OF)
 
     assert response.directions == ['心血管内科']
     assert response.results[0].name == '示例市中心医院'
 
 
+def test_unknown_query_returns_no_directions_and_no_results():
+    response = match('无法映射的查询', '上海', 'overall', as_of=AS_OF)
+
+    assert response.directions == []
+    assert response.results == []
+
+
+def test_recognized_direction_excludes_hospitals_without_that_specialty(monkeypatch):
+    unrelated = replace(
+        DEMO_HOSPITALS[0],
+        id='demo-unrelated',
+        name='示例无关医院',
+        specialties=('神经内科',),
+        specialty_score=100,
+    )
+    monkeypatch.setattr(matcher, 'DEMO_HOSPITALS', (unrelated, DEMO_HOSPITALS[0]))
+
+    response = match('冠心病', '上海', 'specialty', as_of=AS_OF)
+
+    assert [result.id for result in response.results] == ['demo-1']
+
+
+def test_fixed_fixture_expires_against_an_injected_future_date():
+    response = match('冠心病', '上海', 'overall', as_of=date(2027, 1, 23))
+
+    assert response.results == []
+
+
 def test_match_results_include_card_metadata():
-    response = match('冠心病', '上海', 'specialty')
+    response = match('冠心病', '上海', 'specialty', as_of=AS_OF)
     result = response.results[0]
 
     assert result.specialties == ['心血管内科']
@@ -39,17 +69,17 @@ def test_missing_score_fields_contribute_zero(monkeypatch):
     )
     monkeypatch.setattr(matcher, 'DEMO_HOSPITALS', (incomplete,))
 
-    response = match('冠心病', '上海', 'overall')
+    response = match('冠心病', '上海', 'overall', as_of=AS_OF)
 
     assert response.results[0].score == 9.4444
 
 
-@pytest.mark.parametrize('source_date', [None, 'not-a-date', date.today() + timedelta(days=1)])
+@pytest.mark.parametrize('source_date', [None, 'not-a-date', AS_OF + timedelta(days=1)])
 def test_missing_invalid_or_future_source_is_ineligible(monkeypatch, source_date):
     hospital = replace(DEMO_HOSPITALS[0], source_date=source_date)
     monkeypatch.setattr(matcher, 'DEMO_HOSPITALS', (hospital,))
 
-    assert match('冠心病', '上海', 'overall').results == []
+    assert match('冠心病', '上海', 'overall', as_of=AS_OF).results == []
 
 
 @pytest.mark.parametrize(
@@ -57,14 +87,14 @@ def test_missing_invalid_or_future_source_is_ineligible(monkeypatch, source_date
     [
         ('published', False),
         ('verified', False),
-        ('source_date', date.today() - timedelta(days=181)),
+        ('source_date', AS_OF - timedelta(days=181)),
     ],
 )
 def test_unpublished_unverified_or_expired_hospital_is_excluded(monkeypatch, change, value):
     hospital = replace(DEMO_HOSPITALS[0], **{change: value})
     monkeypatch.setattr(matcher, 'DEMO_HOSPITALS', (hospital,))
 
-    assert match('冠心病', '上海', 'overall').results == []
+    assert match('冠心病', '上海', 'overall', as_of=AS_OF).results == []
 
 
 @pytest.mark.parametrize(
@@ -80,17 +110,17 @@ def test_no_city_redistributes_geography_for_every_priority(priority, expected):
 
 
 def test_equally_scored_hospitals_tie_break_by_freshness_then_pinyin(monkeypatch):
-    fresher = replace(DEMO_HOSPITALS[0], name='示例新医院', pinyin_name='z', source_date=date.today() - timedelta(days=10))
+    fresher = replace(DEMO_HOSPITALS[0], name='示例新医院', pinyin_name='z', source_date=AS_OF - timedelta(days=10))
     older = replace(
         DEMO_HOSPITALS[0],
         name='示例旧医院',
         pinyin_name='a',
         capability_score=92.2222222222,
-        source_date=date.today() - timedelta(days=20),
+        source_date=AS_OF - timedelta(days=20),
     )
-    same_freshness_earlier_name = replace(DEMO_HOSPITALS[0], name='示例甲医院', pinyin_name='a', source_date=date.today() - timedelta(days=10))
+    same_freshness_earlier_name = replace(DEMO_HOSPITALS[0], name='示例甲医院', pinyin_name='a', source_date=AS_OF - timedelta(days=10))
     monkeypatch.setattr(matcher, 'DEMO_HOSPITALS', (fresher, older, same_freshness_earlier_name))
 
-    response = match('未知查询', '上海', 'overall')
+    response = match('冠心病', '上海', 'overall', as_of=AS_OF)
 
     assert [result.name for result in response.results] == ['示例甲医院', '示例新医院', '示例旧医院']

@@ -34,16 +34,43 @@ class MatchResponse(BaseModel):
     results: list[MatchResult]
 
 
-def match(query: str, city: str | None, priority: Literal['overall', 'specialty', 'convenience']) -> MatchResponse:
+def match(
+    query: str,
+    city: str | None,
+    priority: Literal['overall', 'specialty', 'convenience'],
+    *,
+    as_of: date | None = None,
+) -> MatchResponse:
     """Return deterministic demo-data matches without retaining the query."""
     if any(term in query for term in EMERGENCY_TERMS):
         return MatchResponse(emergency=True, directions=[], score_version=SCORE_VERSION, results=[])
 
     directions = _directions_for(query)
+    if not directions:
+        return MatchResponse(emergency=False, directions=[], score_version=SCORE_VERSION, results=[])
+
+    effective_date = as_of or date.today()
     specialty_weight, capability_weight, geography_weight, freshness_weight = _weights_for(priority, city)
-    eligible = (hospital for hospital in DEMO_HOSPITALS if is_public_record(hospital))
+    eligible = (
+        hospital
+        for hospital in DEMO_HOSPITALS
+        if is_public_record(hospital, as_of=effective_date)
+        and any(direction in hospital.specialties for direction in directions)
+    )
     scored = [
-        (_score(hospital, directions, city, specialty_weight, capability_weight, geography_weight, freshness_weight), hospital)
+        (
+            _score(
+                hospital,
+                directions,
+                city,
+                specialty_weight,
+                capability_weight,
+                geography_weight,
+                freshness_weight,
+                as_of=effective_date,
+            ),
+            hospital,
+        )
         for hospital in eligible
     ]
     scored.sort(key=lambda item: (-item[0], -item[1].source_date.toordinal(), item[1].pinyin_name))
@@ -90,7 +117,7 @@ def _weights_for(priority: str, city: str | None) -> tuple[int, int, int, int]:
     return specialty, capability, geography, freshness
 
 
-def is_public_record(hospital: DemoHospital) -> bool:
+def is_public_record(hospital: DemoHospital, *, as_of: date | None = None) -> bool:
     if (
         not hospital.published
         or not hospital.verified
@@ -98,7 +125,7 @@ def is_public_record(hospital: DemoHospital) -> bool:
         or not all((hospital.id, hospital.name, hospital.city, hospital.specialties, hospital.demo_label))
     ):
         return False
-    source_age_days = (date.today() - hospital.source_date).days
+    source_age_days = ((as_of or date.today()) - hospital.source_date).days
     return 0 <= source_age_days <= SOURCE_MAX_AGE_DAYS
 
 
@@ -110,11 +137,13 @@ def _score(
     capability_weight: int,
     geography_weight: int,
     freshness_weight: int,
+    *,
+    as_of: date,
 ) -> float:
     specialty = (hospital.specialty_score or 0) if any(direction in hospital.specialties for direction in directions) else 0
     capability = hospital.capability_score or 0
     geography = (hospital.geography_score or 0) if city == hospital.city else 0
-    freshness = max(0, 100 - (date.today() - hospital.source_date).days * 100 / SOURCE_MAX_AGE_DAYS)
+    freshness = max(0, 100 - (as_of - hospital.source_date).days * 100 / SOURCE_MAX_AGE_DAYS)
     return round(
         specialty * specialty_weight / 100
         + capability * capability_weight / 100

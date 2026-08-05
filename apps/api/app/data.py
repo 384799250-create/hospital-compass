@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 
 
 @dataclass(frozen=True)
@@ -20,8 +20,6 @@ class DemoHospital:
     id: str = ''
 
 
-TODAY = date.today()
-
 DEMO_HOSPITALS = (
     DemoHospital(
         id='demo-1',
@@ -32,7 +30,7 @@ DEMO_HOSPITALS = (
         specialty_score=100,
         capability_score=90,
         geography_score=100,
-        source_date=TODAY - timedelta(days=10),
+        source_date=date(2026, 7, 26),
     ),
     DemoHospital(
         id='demo-2',
@@ -43,7 +41,7 @@ DEMO_HOSPITALS = (
         specialty_score=85,
         capability_score=85,
         geography_score=100,
-        source_date=TODAY - timedelta(days=30),
+        source_date=date(2026, 7, 6),
     ),
     DemoHospital(
         id='demo-3',
@@ -54,7 +52,7 @@ DEMO_HOSPITALS = (
         specialty_score=95,
         capability_score=95,
         geography_score=0,
-        source_date=TODAY - timedelta(days=20),
+        source_date=date(2026, 7, 16),
     ),
     DemoHospital(
         id='demo-private',
@@ -65,7 +63,7 @@ DEMO_HOSPITALS = (
         specialty_score=None,
         capability_score=None,
         geography_score=None,
-        source_date=TODAY,
+        source_date=date(2026, 8, 5),
         published=False,
     ),
 )
