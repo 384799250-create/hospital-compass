@@ -3,9 +3,9 @@ export type MatchResult = {
   city: string;
   demo_label: string;
   score: number;
-  specialties?: string[];
-  score_reasons?: string[];
-  source_date?: string;
+  specialties: string[];
+  score_reasons: string[];
+  source_date: string;
 };
 
 export type MatchResponse = {

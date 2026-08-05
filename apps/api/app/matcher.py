@@ -21,6 +21,9 @@ class MatchResult(BaseModel):
     city: str
     demo_label: str
     score: float
+    specialties: list[str]
+    score_reasons: list[str]
+    source_date: date
 
 
 class MatchResponse(BaseModel):
@@ -48,7 +51,15 @@ def match(query: str, city: str | None, priority: Literal['overall', 'specialty'
         directions=directions,
         score_version=SCORE_VERSION,
         results=[
-            MatchResult(name=hospital.name, city=hospital.city, demo_label=hospital.demo_label, score=score)
+            MatchResult(
+                name=hospital.name,
+                city=hospital.city,
+                demo_label=hospital.demo_label,
+                score=score,
+                specialties=list(hospital.specialties),
+                score_reasons=_score_reasons(hospital, directions, city),
+                source_date=hospital.source_date,
+            )
             for score, hospital in scored
         ],
     )
@@ -56,6 +67,18 @@ def match(query: str, city: str | None, priority: Literal['overall', 'specialty'
 
 def _directions_for(query: str) -> list[str]:
     return list(dict.fromkeys(direction for keyword, direction in SPECIALTY_KEYWORDS.items() if keyword in query))
+
+
+def _score_reasons(hospital: DemoHospital, directions: list[str], city: str | None) -> list[str]:
+    reasons = []
+    if any(direction in hospital.specialties for direction in directions) and hospital.specialty_score is not None:
+        reasons.append('专科方向匹配')
+    if hospital.capability_score is not None:
+        reasons.append('服务能力信息')
+    if city == hospital.city and hospital.geography_score is not None:
+        reasons.append('同城信息')
+    reasons.append('来源信息在有效期内')
+    return reasons
 
 
 def _weights_for(priority: str, city: str | None) -> tuple[int, int, int, int]:

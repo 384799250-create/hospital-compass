@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 import { MatchApiError, MatchResponse, matchHospitals } from '../lib/api';
 import styles from './page.module.css';
@@ -15,6 +15,20 @@ export default function Page() {
   const [showEmergency, setShowEmergency] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+  const acknowledgementRef = useRef<HTMLButtonElement>(null);
+  const emergencyDialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    if (!showEmergency) return;
+
+    const dialog = emergencyDialogRef.current;
+    if (dialog && !dialog.open) {
+      if (typeof dialog.showModal === 'function') dialog.showModal();
+      else dialog.setAttribute('open', '');
+    }
+    acknowledgementRef.current?.focus();
+  }, [showEmergency]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -40,10 +54,24 @@ export default function Page() {
     }
   }
 
+  function closeEmergency() {
+    const dialog = emergencyDialogRef.current;
+    if (dialog && typeof dialog.close === 'function') dialog.close();
+    setShowEmergency(false);
+    queueMicrotask(() => submitButtonRef.current?.focus());
+  }
+
+  function trapEmergencyFocus(event: KeyboardEvent<HTMLDialogElement>) {
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      acknowledgementRef.current?.focus();
+    }
+  }
+
   const recommendations = response && !response.emergency ? response.results : [];
 
   return (
-    <main className={styles.page}>
+    <main className={styles.page} inert={showEmergency}>
       <section className={styles.search} aria-labelledby="page-title">
         <p className={styles.eyebrow}>医疗信息导航</p>
         <h1 id="page-title">医院信息匹配</h1>
@@ -75,7 +103,7 @@ export default function Page() {
             <option value="convenience">就近便利</option>
           </select>
 
-          <button type="submit" disabled={loading}>{loading ? '匹配中…' : '开始匹配'}</button>
+          <button ref={submitButtonRef} type="submit" disabled={loading}>{loading ? '匹配中…' : '开始匹配'}</button>
         </form>
       </section>
 
@@ -91,10 +119,10 @@ export default function Page() {
                 <h3>{hospital.name}</h3>
                 <p>{hospital.city} · {hospital.demo_label || '演示数据'}</p>
                 <dl>
-                  <div><dt>专科方向</dt><dd>{(hospital.specialties ?? response.directions).join('、') || '未提供'}</dd></div>
+                  <div><dt>专科方向</dt><dd>{hospital.specialties.join('、')}</dd></div>
                   <div><dt>匹配分数</dt><dd>{hospital.score}</dd></div>
-                  <div><dt>分数说明</dt><dd>{(hospital.score_reasons ?? ['根据所选匹配偏好与演示资料生成']).join('；')}</dd></div>
-                  <div><dt>来源日期</dt><dd>{hospital.source_date ?? '未提供'}</dd></div>
+                  <div><dt>分数说明</dt><dd>{hospital.score_reasons.join('；')}</dd></div>
+                  <div><dt>来源日期</dt><dd>{hospital.source_date}</dd></div>
                 </dl>
               </article>
             ))}
@@ -103,13 +131,17 @@ export default function Page() {
       )}
 
       {showEmergency && (
-        <div className={styles.backdrop} role="presentation">
-          <section aria-modal="true" aria-labelledby="emergency-title" className={styles.dialog} role="dialog">
-            <h2 id="emergency-title">请立即急诊或拨打 120</h2>
-            <p>当前描述可能需要紧急处理。此工具不能替代紧急医疗服务。</p>
-            <button type="button" onClick={() => setShowEmergency(false)}>我已了解，仍查看医院信息</button>
-          </section>
-        </div>
+        <dialog
+          ref={emergencyDialogRef}
+          aria-labelledby="emergency-title"
+          className={styles.dialog}
+          onCancel={(event) => event.preventDefault()}
+          onKeyDown={trapEmergencyFocus}
+        >
+          <h2 id="emergency-title">请立即急诊或拨打 120</h2>
+          <p>当前描述可能需要紧急处理。此工具不能替代紧急医疗服务。</p>
+          <button ref={acknowledgementRef} type="button" onClick={closeEmergency}>我已了解，仍查看医院信息</button>
+        </dialog>
       )}
     </main>
   );

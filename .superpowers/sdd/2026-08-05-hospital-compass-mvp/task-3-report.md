@@ -61,5 +61,32 @@ Result: 15 tests passed.
 
 ## Concerns
 
-- The current Task 1-2 API response supplies only name, city, demo label, and score for each result. The UI supports optional `specialties`, `score_reasons`, and `source_date` when the API later supplies them; with the present contract it truthfully displays `未提供` for source date and uses the API directions plus a generic explanation. No backend contract expansion was made because it is outside Task 3.
 - No telemetry implementation was added, so symptom text is not included in telemetry.
+
+## Review follow-up
+
+### Accessibility modal behavior
+
+- Replaced the visual-only overlay with a native `<dialog>` opened through `showModal()` when the browser supports it.
+- The background `<main>` is inert while the dialog is shown, the acknowledgement control is focused on open, Tab remains within the dialog, Escape does not bypass acknowledgement, and acknowledgement restores focus to `开始匹配`.
+- The accessibility assertions were added before the implementation. The web red run failed because `main` did not have `inert`; after extending the test with Tab behavior, it failed because focus escaped to `body`.
+
+### Per-result card metadata
+
+- The API now returns required `specialties`, `score_reasons`, and `source_date` fields for every eligible result. Reasons reflect the actual scoring inputs available for that record; source date is the verified record date.
+- The UI client types require those fields and cards render them directly, with no generic explanation or `未提供` placeholder.
+- The matcher metadata test was added before the implementation and failed with `AttributeError: 'MatchResult' object has no attribute 'specialties'`.
+
+### Follow-up commands and results
+
+```text
+cd apps/web && npm.cmd test -- --run tests/page.test.tsx
+```
+
+Green result: 1 test file passed; 3 tests passed.
+
+```text
+cd apps/api && python -m pytest tests/test_matcher.py -v
+```
+
+Green result: 14 tests passed.

@@ -21,6 +21,15 @@ def test_specialty_sort_is_deterministic():
     assert response.results[0].name == '示例市中心医院'
 
 
+def test_match_results_include_card_metadata():
+    response = match('冠心病', '上海', 'specialty')
+    result = response.results[0]
+
+    assert result.specialties == ['心血管内科']
+    assert result.score_reasons == ['专科方向匹配', '服务能力信息', '同城信息', '来源信息在有效期内']
+    assert result.source_date == DEMO_HOSPITALS[0].source_date
+
+
 def test_missing_score_fields_contribute_zero(monkeypatch):
     incomplete = replace(
         DEMO_HOSPITALS[0],

@@ -32,8 +32,8 @@
 .card dl div { margin-top: .75rem; }
 .card dt { color: #4c596e; font-weight: 700; }
 .card dd { margin: .2rem 0 0; }
-.backdrop { align-items: center; background: rgb(0 0 0 / 55%); display: flex; inset: 0; justify-content: center; padding: 1rem; position: fixed; }
-.dialog { max-width: 28rem; }
+.dialog { border: 0; max-width: 28rem; }
+.dialog::backdrop { background: rgb(0 0 0 / 55%); }
 
 @media (min-width: 42rem) {
   .page { padding: 2rem; }

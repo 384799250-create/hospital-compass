@@ -32,6 +32,16 @@ describe('patient matching page', () => {
 
     expect(await screen.findByText('请立即急诊或拨打 120')).not.toBeNull();
     expect(screen.queryByText('推荐医院')).toBeNull();
+    expect(screen.getByRole('main').hasAttribute('inert')).toBe(true);
+    const acknowledgement = screen.getByRole('button', { name: '我已了解，仍查看医院信息' });
+    expect(document.activeElement).toBe(acknowledgement);
+
+    await user.tab();
+    expect(document.activeElement).toBe(acknowledgement);
+
+    await user.click(acknowledgement);
+
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '开始匹配' }));
   });
 
   it('shows official-source fallback copy when matching is unavailable', async () => {
@@ -44,5 +54,31 @@ describe('patient matching page', () => {
 
     expect(await screen.findByText(/当地卫生健康部门地址与医院官方站点/)).not.toBeNull();
     expect(screen.queryByText('推荐医院')).toBeNull();
+  });
+
+  it('renders specialty, score reasons, and source date from a normal API response', async () => {
+    vi.mocked(matchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: ['心血管内科'],
+      score_version: 'demo-v1',
+      results: [{
+        name: '示例市中心医院',
+        city: '上海',
+        demo_label: '演示数据',
+        score: 91.25,
+        specialties: ['心血管内科'],
+        score_reasons: ['专科方向匹配', '来源信息在有效期内'],
+        source_date: '2026-07-26',
+      }],
+    });
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '冠心病');
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(await screen.findByText('心血管内科')).not.toBeNull();
+    expect(screen.getByText('专科方向匹配；来源信息在有效期内')).not.toBeNull();
+    expect(screen.getByText('2026-07-26')).not.toBeNull();
   });
 });
