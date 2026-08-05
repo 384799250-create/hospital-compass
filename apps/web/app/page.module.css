@@ -35,7 +35,7 @@
 .form { display: grid; gap: .6rem; margin-top: 1.25rem; }
 .form label { font-weight: 750; margin-top: .4rem; }
 .form textarea, .form select, .form button, .dialog button { border: 1px solid #b6d7cf; border-radius: .65rem; font: inherit; padding: .8rem .9rem; }
-.form textarea:focus, .form select:focus, button:focus-visible { outline: 3px solid #A94338; outline-offset: 2px; }
+.form textarea:focus, .form select:focus, button:focus-visible { box-shadow: 0 0 0 2px #fffdf8, 0 0 0 5px #28766e; outline: 0; }
 .form button, .dialog button { background: #173B38; border: 0; color: #fff; cursor: pointer; font-weight: 750; margin-top: .75rem; }
 .form button:disabled { cursor: wait; opacity: .65; }
 .notice, .results { margin-top: 1rem; }
