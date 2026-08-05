@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.matcher import match
 from app.schemas import MatchRequest
 
 logger = logging.getLogger(__name__)
@@ -38,4 +39,4 @@ async def health():
 
 @app.post('/v1/matches')
 async def matches(request: MatchRequest):
-    return {'matches': []}
+    return match(request.query, request.city, request.priority)

@@ -1,0 +1,91 @@
+from datetime import date
+from typing import Literal
+
+from pydantic import BaseModel
+
+from app.data import DEMO_HOSPITALS, DemoHospital
+
+SCORE_VERSION = 'demo-v1'
+SOURCE_MAX_AGE_DAYS = 180
+EMERGENCY_TERMS = ('突发胸痛', '呼吸困难', '意识障碍', '大出血')
+SPECIALTY_KEYWORDS = {'冠心病': '心血管内科', '胸痛': '心血管内科'}
+WEIGHTS = {
+    'overall': (45, 25, 20, 10),
+    'specialty': (60, 20, 10, 10),
+    'convenience': (35, 20, 35, 10),
+}
+
+
+class MatchResult(BaseModel):
+    name: str
+    city: str
+    demo_label: str
+    score: float
+
+
+class MatchResponse(BaseModel):
+    emergency: bool
+    directions: list[str]
+    score_version: str
+    results: list[MatchResult]
+
+
+def match(query: str, city: str | None, priority: Literal['overall', 'specialty', 'convenience']) -> MatchResponse:
+    """Return deterministic demo-data matches without retaining the query."""
+    if any(term in query for term in EMERGENCY_TERMS):
+        return MatchResponse(emergency=True, directions=[], score_version=SCORE_VERSION, results=[])
+
+    directions = _directions_for(query)
+    specialty_weight, capability_weight, geography_weight, freshness_weight = _weights_for(priority, city)
+    eligible = (hospital for hospital in DEMO_HOSPITALS if _is_eligible(hospital))
+    scored = [
+        (_score(hospital, directions, city, specialty_weight, capability_weight, geography_weight, freshness_weight), hospital)
+        for hospital in eligible
+    ]
+    scored.sort(key=lambda item: (-item[0], -item[1].source_date.toordinal(), item[1].pinyin_name))
+    return MatchResponse(
+        emergency=False,
+        directions=directions,
+        score_version=SCORE_VERSION,
+        results=[
+            MatchResult(name=hospital.name, city=hospital.city, demo_label=hospital.demo_label, score=score)
+            for score, hospital in scored
+        ],
+    )
+
+
+def _directions_for(query: str) -> list[str]:
+    return list(dict.fromkeys(direction for keyword, direction in SPECIALTY_KEYWORDS.items() if keyword in query))
+
+
+def _weights_for(priority: str, city: str | None) -> tuple[int, int, int, int]:
+    specialty, capability, geography, freshness = WEIGHTS[priority]
+    if city is None:
+        return specialty + 12, capability + 8, 0, freshness
+    return specialty, capability, geography, freshness
+
+
+def _is_eligible(hospital: DemoHospital) -> bool:
+    return hospital.published and hospital.verified and (date.today() - hospital.source_date).days <= SOURCE_MAX_AGE_DAYS
+
+
+def _score(
+    hospital: DemoHospital,
+    directions: list[str],
+    city: str | None,
+    specialty_weight: int,
+    capability_weight: int,
+    geography_weight: int,
+    freshness_weight: int,
+) -> float:
+    specialty = (hospital.specialty_score or 0) if any(direction in hospital.specialties for direction in directions) else 0
+    capability = hospital.capability_score or 0
+    geography = (hospital.geography_score or 0) if city == hospital.city else 0
+    freshness = max(0, 100 - (date.today() - hospital.source_date).days * 100 / SOURCE_MAX_AGE_DAYS)
+    return round(
+        specialty * specialty_weight / 100
+        + capability * capability_weight / 100
+        + geography * geography_weight / 100
+        + freshness * freshness_weight / 100,
+        4,
+    )
