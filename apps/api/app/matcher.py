@@ -41,7 +41,7 @@ def match(query: str, city: str | None, priority: Literal['overall', 'specialty'
 
     directions = _directions_for(query)
     specialty_weight, capability_weight, geography_weight, freshness_weight = _weights_for(priority, city)
-    eligible = (hospital for hospital in DEMO_HOSPITALS if _is_eligible(hospital))
+    eligible = (hospital for hospital in DEMO_HOSPITALS if is_public_record(hospital))
     scored = [
         (_score(hospital, directions, city, specialty_weight, capability_weight, geography_weight, freshness_weight), hospital)
         for hospital in eligible
@@ -90,8 +90,13 @@ def _weights_for(priority: str, city: str | None) -> tuple[int, int, int, int]:
     return specialty, capability, geography, freshness
 
 
-def _is_eligible(hospital: DemoHospital) -> bool:
-    if not hospital.published or not hospital.verified or type(hospital.source_date) is not date:
+def is_public_record(hospital: DemoHospital) -> bool:
+    if (
+        not hospital.published
+        or not hospital.verified
+        or type(hospital.source_date) is not date
+        or not all((hospital.id, hospital.name, hospital.city, hospital.specialties, hospital.demo_label))
+    ):
         return False
     source_age_days = (date.today() - hospital.source_date).days
     return 0 <= source_age_days <= SOURCE_MAX_AGE_DAYS

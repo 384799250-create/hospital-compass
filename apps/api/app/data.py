@@ -18,9 +18,6 @@ class DemoHospital:
     verified: bool = True
     demo_label: str = 'DEMO DATA'
     id: str = ''
-    address: str = ''
-    official_url: str = ''
-    source_url: str = ''
 
 
 TODAY = date.today()
@@ -36,9 +33,6 @@ DEMO_HOSPITALS = (
         capability_score=90,
         geography_score=100,
         source_date=TODAY - timedelta(days=10),
-        address='1 Demo Road',
-        official_url='https://example.invalid/hospitals/demo-1',
-        source_url='https://example.invalid/sources/demo-1',
     ),
     DemoHospital(
         id='demo-2',
@@ -50,9 +44,6 @@ DEMO_HOSPITALS = (
         capability_score=85,
         geography_score=100,
         source_date=TODAY - timedelta(days=30),
-        address='2 Demo Road',
-        official_url='https://example.invalid/hospitals/demo-2',
-        source_url='https://example.invalid/sources/demo-2',
     ),
     DemoHospital(
         id='demo-3',
@@ -64,9 +55,6 @@ DEMO_HOSPITALS = (
         capability_score=95,
         geography_score=0,
         source_date=TODAY - timedelta(days=20),
-        address='3 Demo Road',
-        official_url='https://example.invalid/hospitals/demo-3',
-        source_url='https://example.invalid/sources/demo-3',
     ),
     DemoHospital(
         id='demo-private',

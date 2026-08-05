@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.matcher import match
+from app.matcher import is_public_record, match
 from app.data import DEMO_HOSPITALS
 from app.schemas import MatchRequest
 
@@ -46,7 +46,7 @@ async def matches(request: MatchRequest):
 @app.get('/v1/hospitals/{hospital_id}')
 async def hospital_detail(hospital_id: str):
     hospital = next(
-        (item for item in DEMO_HOSPITALS if item.id == hospital_id and item.published),
+        (item for item in DEMO_HOSPITALS if item.id == hospital_id and is_public_record(item)),
         None,
     )
     if hospital is None:
@@ -56,12 +56,9 @@ async def hospital_detail(hospital_id: str):
         'id': hospital.id,
         'name': hospital.name,
         'city': hospital.city,
-        'address': hospital.address,
-        'official_url': hospital.official_url,
         'specialties': list(hospital.specialties),
         'source': {
             'label': hospital.demo_label,
-            'url': hospital.source_url,
             'date': hospital.source_date.isoformat(),
         },
     }
