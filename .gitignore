@@ -1,0 +1,12 @@
+node_modules/
+.next/
+dist/
+__pycache__/
+.pytest_cache/
+.venv/
+.env
+coverage/
+playwright-report/
+test-results/
+.superpowers/
+.worktrees/
