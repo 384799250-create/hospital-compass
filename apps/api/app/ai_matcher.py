@@ -89,7 +89,7 @@ def ai_match(
 
     body = json.dumps(
         {
-            'model': settings.get('DEEPSEEK_MODEL', 'deepseek-chat'),
+            'model': settings.get('DEEPSEEK_MODEL', 'deepseek-v4-flash'),
             'messages': [
                 {'role': 'system', 'content': SYSTEM_PROMPT},
                 {'role': 'user', 'content': query},

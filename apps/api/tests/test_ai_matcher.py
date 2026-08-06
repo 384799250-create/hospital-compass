@@ -130,7 +130,10 @@ def test_successful_deepseek_json_matches_filtered_direction_with_json_mode():
 
 
 def test_compliant_pending_candidates_are_returned_when_no_verified_results_exist():
+    captured = {}
+
     def transport(request, timeout):
+        captured['model'] = json.loads(request.data)['model']
         return FakeResponse(deepseek_payload(json.dumps({
             'summary': '暂无已核验匹配。',
             'directions': ['心血管内科'],
@@ -156,6 +159,7 @@ def test_compliant_pending_candidates_are_returned_when_no_verified_results_exis
     )
 
     assert response.ai.used is True
+    assert captured['model'] == 'deepseek-v4-flash'
     assert response.results == []
     assert [candidate.model_dump() for candidate in response.pending_candidates] == [{
         'name': '待核验医院',
