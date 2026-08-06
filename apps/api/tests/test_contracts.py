@@ -66,6 +66,7 @@ def test_ai_match_without_api_key_falls_back_to_local_match(client, monkeypatch)
         'directions': [],
         'fallback': True,
     }
+    assert payload['pending_candidates'] == []
 
 
 @pytest.mark.parametrize('coerced_consent', ['true', 'false', '1', '0', 1, 0, 1.0, 0.0])
@@ -137,6 +138,7 @@ def test_ai_match_success_runs_transport_off_event_loop_and_keeps_secrets_out_of
         'directions': ['眼科'],
         'fallback': False,
     }
+    assert response.json()['pending_candidates'] == []
     assert [result['id'] for result in response.json()['results']] == ['beijing-tongren']
     assert symptom_query not in caplog.text
     assert api_key not in caplog.text
@@ -153,6 +155,24 @@ def test_ai_match_openapi_declares_ai_metadata_response(client):
     schemas = openapi['components']['schemas']
     assert schemas['AIMatchResponse']['properties']['ai'] == {
         '$ref': '#/components/schemas/AIMetadata',
+    }
+    assert schemas['AIMatchResponse']['properties']['pending_candidates'] == {
+        'items': {'$ref': '#/components/schemas/PendingCandidate'},
+        'title': 'Pending Candidates',
+        'type': 'array',
+    }
+    assert 'pending_candidates' in schemas['AIMatchResponse']['required']
+    assert set(schemas['PendingCandidate']['properties']) == {
+        'name',
+        'city',
+        'direction',
+        'reason',
+    }
+    assert set(schemas['PendingCandidate']['required']) == {
+        'name',
+        'city',
+        'direction',
+        'reason',
     }
     assert set(schemas['AIMetadata']['properties']) == {
         'used',

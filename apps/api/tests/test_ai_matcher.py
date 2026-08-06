@@ -49,6 +49,7 @@ def assert_local_fallback(response):
         'directions': [],
         'fallback': True,
     }
+    assert response.pending_candidates == []
 
 
 def test_successful_deepseek_json_matches_filtered_direction_with_json_mode():
@@ -102,7 +103,10 @@ def test_successful_deepseek_json_matches_filtered_direction_with_json_mode():
                     'role': 'system',
                     'content': (
                         '只返回 JSON object：summary 是最多 240 字符的字符串，'
-                        'directions 是建议专科方向的字符串数组。'
+                        'directions 是建议专科方向的字符串数组；pending_candidates 是可选数组，'
+                        '每项只能包含 name、city、direction、reason，且最多返回 3 项。'
+                        '候选仅是待人工核验的名称，不是已核验推荐；不得提供诊断或治疗建议；'
+                        '不得编造地址、电话或来源链接。'
                     ),
                 },
                 {'role': 'user', 'content': '持续心慌'},
@@ -111,6 +115,151 @@ def test_successful_deepseek_json_matches_filtered_direction_with_json_mode():
         },
         'timeout': 10.0,
     }
+
+
+def test_compliant_pending_candidates_are_returned_when_no_verified_results_exist():
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '暂无已核验匹配。',
+            'directions': ['心血管内科'],
+            'pending_candidates': [
+                {
+                    'name': '待核验医院',
+                    'city': '上海',
+                    'direction': '心血管内科',
+                    'reason': '名称可能与所需专科方向相关，需人工核验。',
+                },
+            ],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续心悸',
+        city='上海',
+        priority='specialty',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.ai.used is True
+    assert response.results == []
+    assert [candidate.model_dump() for candidate in response.pending_candidates] == [{
+        'name': '待核验医院',
+        'city': '上海',
+        'direction': '心血管内科',
+        'reason': '名称可能与所需专科方向相关，需人工核验。',
+    }]
+
+
+def test_pending_candidates_are_hidden_when_verified_results_exist():
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '已有核验结果。',
+            'directions': ['心血管内科'],
+            'pending_candidates': [{
+                'name': '不应公开的待核验名称',
+                'city': '上海',
+                'direction': '心血管内科',
+                'reason': '仅供人工核验。',
+            }],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续心悸',
+        city='上海',
+        priority='overall',
+        ai_consent=True,
+        hospitals=DEMO_HOSPITALS,
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert [result.id for result in response.results] == ['demo-1', 'demo-2', 'demo-3']
+    assert response.pending_candidates == []
+
+
+def test_invalid_pending_candidates_are_dropped_without_failing_the_ai_match():
+    valid_candidate = {
+        'name': '合规待核验医院',
+        'city': '上海',
+        'direction': '心血管内科',
+        'reason': '只保留名称供人工核验。',
+    }
+    invalid_candidates = [
+        'not-an-object',
+        {**valid_candidate, 'address': '不得返回的地址'},
+        {**valid_candidate, 'name': 42},
+        {**valid_candidate, 'city': '   '},
+        {**valid_candidate, 'direction': '未知科室'},
+        {**valid_candidate, 'name': '医' * 81},
+        {**valid_candidate, 'city': '城' * 41},
+        {**valid_candidate, 'reason': '因' * 181},
+    ]
+
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '过滤不安全候选。',
+            'directions': ['心血管内科'],
+            'pending_candidates': [*invalid_candidates, valid_candidate],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续心悸',
+        city='上海',
+        priority='overall',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.ai.used is True
+    assert response.results == []
+    assert [candidate.model_dump() for candidate in response.pending_candidates] == [
+        valid_candidate,
+    ]
+
+
+def test_pending_candidates_are_trimmed_and_limited_to_three_valid_items():
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '返回最多三个待核验名称。',
+            'directions': ['心血管内科'],
+            'pending_candidates': [
+                {
+                    'name': f'  待核验医院{number}  ',
+                    'city': '  上海  ',
+                    'direction': '  心血管内科  ',
+                    'reason': '  仅供人工核验。  ',
+                }
+                for number in range(1, 5)
+            ],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续心悸',
+        city='上海',
+        priority='overall',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert [candidate.model_dump() for candidate in response.pending_candidates] == [
+        {
+            'name': f'待核验医院{number}',
+            'city': '上海',
+            'direction': '心血管内科',
+            'reason': '仅供人工核验。',
+        }
+        for number in range(1, 4)
+    ]
 
 
 def test_no_consent_returns_local_match_without_calling_transport():
@@ -135,6 +284,7 @@ def test_no_consent_returns_local_match_without_calling_transport():
         'directions': [],
         'fallback': True,
     }
+    assert response.pending_candidates == []
 
 
 def test_emergency_keeps_local_emergency_result_without_calling_transport():
@@ -161,6 +311,7 @@ def test_emergency_keeps_local_emergency_result_without_calling_transport():
         'directions': [],
         'fallback': True,
     }
+    assert response.pending_candidates == []
 
 
 def test_unknown_ai_directions_are_removed_before_matching():

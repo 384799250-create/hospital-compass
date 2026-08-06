@@ -5,7 +5,7 @@ from typing import Callable, Literal, Mapping
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator
 
 from app.data import DemoHospital
 from app.matcher import SPECIALTY_KEYWORDS, MatchResponse, match, match_directions
@@ -13,7 +13,10 @@ from app.matcher import SPECIALTY_KEYWORDS, MatchResponse, match, match_directio
 DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
 SYSTEM_PROMPT = (
     '只返回 JSON object：summary 是最多 240 字符的字符串，'
-    'directions 是建议专科方向的字符串数组。'
+    'directions 是建议专科方向的字符串数组；pending_candidates 是可选数组，'
+    '每项只能包含 name、city、direction、reason，且最多返回 3 项。'
+    '候选仅是待人工核验的名称，不是已核验推荐；不得提供诊断或治疗建议；'
+    '不得编造地址、电话或来源链接。'
 )
 
 
@@ -26,6 +29,28 @@ class AIMetadata(BaseModel):
 
 class AIMatchResponse(MatchResponse):
     ai: AIMetadata
+    pending_candidates: list['PendingCandidate']
+
+
+class PendingCandidate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    name: StrictStr = Field(min_length=1, max_length=80)
+    city: StrictStr = Field(min_length=1, max_length=40)
+    direction: StrictStr = Field(min_length=1)
+    reason: StrictStr = Field(min_length=1, max_length=180)
+
+    @field_validator('name', 'city', 'direction', 'reason', mode='before')
+    @classmethod
+    def strip_text_fields(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator('direction')
+    @classmethod
+    def direction_must_be_allowed(cls, value: str) -> str:
+        if value not in set(SPECIALTY_KEYWORDS.values()):
+            raise ValueError('direction is not locally allowed')
+        return value
 
 
 class DeepSeekOutput(BaseModel):
@@ -33,6 +58,7 @@ class DeepSeekOutput(BaseModel):
 
     summary: str = Field(max_length=240)
     directions: list[str]
+    pending_candidates: list[object] = Field(default_factory=list)
 
 
 def ai_match(
@@ -108,6 +134,9 @@ def ai_match(
     matched = match_directions(directions, city, priority, hospitals=hospitals, as_of=as_of)
     return AIMatchResponse(
         **matched.model_dump(),
+        pending_candidates=(
+            [] if matched.results else _clean_pending_candidates(ai_payload.pending_candidates)
+        ),
         ai=AIMetadata(
             used=True,
             summary=ai_payload.summary,
@@ -117,8 +146,22 @@ def ai_match(
     )
 
 
+def _clean_pending_candidates(raw_candidates: list[object]) -> list[PendingCandidate]:
+    candidates = []
+    for raw_candidate in raw_candidates:
+        try:
+            candidate = PendingCandidate.model_validate(raw_candidate)
+        except ValidationError:
+            continue
+        candidates.append(candidate)
+        if len(candidates) == 3:
+            break
+    return candidates
+
+
 def _fallback(local: MatchResponse) -> AIMatchResponse:
     return AIMatchResponse(
         **local.model_dump(),
         ai=AIMetadata(used=False, summary=None, directions=[], fallback=True),
+        pending_candidates=[],
     )
