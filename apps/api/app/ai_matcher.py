@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import date
 from typing import Callable, Literal, Mapping
 from urllib.error import URLError
@@ -11,6 +12,13 @@ from app.data import DemoHospital
 from app.matcher import SPECIALTY_KEYWORDS, MatchResponse, match, match_directions
 
 DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
+_PROHIBITED_PENDING_CANDIDATE_PATTERNS = (
+    re.compile(r'https?://|www\.', re.IGNORECASE),
+    re.compile(r'(?<!\d)\d(?:[\s-]*\d){6,}(?!\d)'),
+    re.compile(r'[省市区县路街号]'),
+    re.compile(r'推荐'),
+    re.compile(r'联系人|联系方式|微信|(?:电子)?邮箱|e-?mail', re.IGNORECASE),
+)
 SYSTEM_PROMPT = (
     '只返回 JSON object：summary 是最多 240 字符的字符串，'
     'directions 是建议专科方向的字符串数组；pending_candidates 是可选数组，'
@@ -152,6 +160,13 @@ def _clean_pending_candidates(raw_candidates: list[object]) -> list[PendingCandi
         try:
             candidate = PendingCandidate.model_validate(raw_candidate)
         except ValidationError:
+            continue
+        display_values = candidate.model_dump().values()
+        if any(
+            pattern.search(value)
+            for value in display_values
+            for pattern in _PROHIBITED_PENDING_CANDIDATE_PATTERNS
+        ):
             continue
         candidates.append(candidate)
         if len(candidates) == 3:

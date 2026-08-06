@@ -224,6 +224,105 @@ def test_invalid_pending_candidates_are_dropped_without_failing_the_ai_match():
     ]
 
 
+@pytest.mark.parametrize(
+    'unsafe_reason',
+    [
+        '详情见 http://example.cn/hospital',
+        '详情见 https://example.cn/hospital',
+        '详情见 www.example.cn/hospital',
+        '联系电话 123 4567',
+        '联系电话 123-456-7890',
+        '位于某省',
+        '位于某市',
+        '位于某区',
+        '位于某县',
+        '位于健康路',
+        '位于平安街',
+        '门牌 10 号',
+        '推荐前往该院核验',
+        '联系人张医生',
+        '微信 doctor123',
+        '邮箱 doctor@example.cn',
+    ],
+    ids=[
+        'http-url',
+        'https-url',
+        'www-url',
+        'spaced-phone',
+        'dashed-phone',
+        'province-address-cue',
+        'city-address-cue',
+        'district-address-cue',
+        'county-address-cue',
+        'road-address-cue',
+        'street-address-cue',
+        'number-address-cue',
+        'recommendation-wording',
+        'contact-person',
+        'wechat-contact',
+        'email-contact',
+    ],
+)
+def test_pending_candidate_is_dropped_when_reason_contains_prohibited_content(unsafe_reason):
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '暂无已核验匹配。',
+            'directions': ['心血管内科'],
+            'pending_candidates': [{
+                'name': '待核验医院',
+                'city': '上海',
+                'direction': '心血管内科',
+                'reason': unsafe_reason,
+            }],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续心悸',
+        city='上海',
+        priority='overall',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.ai.used is True
+    assert response.results == []
+    assert response.pending_candidates == []
+
+
+@pytest.mark.parametrize('field', ['name', 'city'], ids=['name', 'city'])
+def test_pending_candidate_is_dropped_when_another_display_field_contains_prohibited_content(field):
+    candidate = {
+        'name': '待核验医院',
+        'city': '上海',
+        'direction': '心血管内科',
+        'reason': '名称可能与所需专科方向相关，需人工核验。',
+    }
+    candidate[field] = '包含推荐措辞'
+
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '暂无已核验匹配。',
+            'directions': ['心血管内科'],
+            'pending_candidates': [candidate],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续心悸',
+        city='上海',
+        priority='overall',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.pending_candidates == []
+
+
 def test_pending_candidates_are_trimmed_and_limited_to_three_valid_items():
     def transport(request, timeout):
         return FakeResponse(deepseek_payload(json.dumps({
