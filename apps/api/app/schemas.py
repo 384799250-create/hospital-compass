@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, StrictBool, field_validator
 
 class MatchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
-    city: str | None = None
+    city: str | None = Field(default=None, max_length=40)
     priority: Literal['overall', 'specialty', 'convenience'] = 'overall'
 
     @field_validator('query')

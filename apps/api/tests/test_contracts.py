@@ -9,6 +9,7 @@ import pytest
 
 import app.main as main
 from app.ai_matcher import ai_match
+from app.matcher import SPECIALTY_KEYWORDS
 
 
 class FakeAIResponse:
@@ -46,6 +47,35 @@ def test_blank_query_returns_invalid_request(client):
     assert response.json()['code'] == 'INVALID_REQUEST'
 
 
+@pytest.mark.parametrize(
+    ('path', 'payload'),
+    [
+        ('/v1/matches', {'query': 'eye pain'}),
+        ('/v1/ai-matches', {'query': 'eye pain', 'ai_consent': True}),
+    ],
+)
+def test_match_endpoints_reject_city_longer_than_pending_candidate_limit(client, path, payload):
+    response = client.post(path, json={**payload, 'city': 'x' * 41})
+
+    assert response.status_code == 400
+    assert response.json() == {'code': 'INVALID_REQUEST'}
+
+
+@pytest.mark.parametrize(
+    ('path', 'payload'),
+    [
+        ('/v1/matches', {'query': 'eye pain'}),
+        ('/v1/ai-matches', {'query': 'eye pain', 'ai_consent': True}),
+    ],
+)
+def test_match_endpoints_allow_an_omitted_city(client, monkeypatch, path, payload):
+    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+
+    response = client.post(path, json=payload)
+
+    assert response.status_code == 200
+
+
 def test_ai_match_without_api_key_falls_back_to_local_match(client, monkeypatch):
     monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
 
@@ -67,6 +97,45 @@ def test_ai_match_without_api_key_falls_back_to_local_match(client, monkeypatch)
         'fallback': True,
     }
     assert payload['pending_candidates'] == []
+
+
+def test_ai_match_returns_placeholders_for_ai_directions_with_a_max_length_city(client, monkeypatch):
+    city = 'x' * 40
+    direction = next(iter(SPECIALTY_KEYWORDS.values()))
+    monkeypatch.setattr(main, 'PUBLIC_HOSPITALS', ())
+
+    def transport(request, timeout):
+        return FakeAIResponse({
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'summary': 'Specialty direction identified',
+                        'directions': [direction],
+                    }),
+                },
+            }],
+        })
+
+    monkeypatch.setattr(
+        main,
+        'ai_match',
+        partial(ai_match, environ={'DEEPSEEK_API_KEY': 'test-key'}, transport=transport),
+    )
+
+    response = client.post('/v1/ai-matches', json={
+        'query': 'eye pain',
+        'city': city,
+        'priority': 'overall',
+        'ai_consent': True,
+    })
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['ai']['used'] is True
+    assert payload['results'] == []
+    assert payload['pending_candidates'][0]['city'] == city
+    assert payload['pending_candidates'][0]['direction'] == direction
+    assert payload['pending_candidates'][0]['placeholder'] is True
 
 
 @pytest.mark.parametrize('coerced_consent', ['true', 'false', '1', '0', 1, 0, 1.0, 0.0])
