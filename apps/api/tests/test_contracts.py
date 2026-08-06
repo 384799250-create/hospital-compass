@@ -49,3 +49,24 @@ def test_verified_beijing_publish_list_is_the_only_public_api_dataset(client):
 
     assert detail.status_code == 200
     assert detail.json()['id'] == 'beijing-pumch'
+
+
+@pytest.mark.parametrize('query', ['眼睛疼', '鼻塞'])
+def test_tongren_is_returned_for_its_verified_disease_tags(client, query):
+    response = client.post('/v1/matches', json={
+        'query': query,
+        'city': 'Beijing',
+        'priority': 'overall',
+    })
+
+    assert response.status_code == 200
+    assert response.json()['results'] == [{
+        'id': 'beijing-tongren',
+        'name': '首都医科大学附属北京同仁医院',
+        'city': 'Beijing',
+        'demo_label': '已核验公开信息',
+        'score': 10.0,
+        'specialties': ['眼科', '耳鼻咽喉头颈外科'],
+        'score_reasons': ['来源信息在有效期内'],
+        'source_date': '2026-08-06',
+    }]
