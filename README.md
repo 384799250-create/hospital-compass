@@ -2,9 +2,9 @@
 
 Hospital Compass is a hospital-information navigation demonstration. It does not provide diagnosis, treatment, efficacy, or “best hospital” claims.
 
-## Demo-data limits
+## Data and safety limits
 
-Every displayed hospital record is labelled **DEMO DATA**. The records are in-memory examples, are not a directory of real hospitals, and must be verified with official sources before use. The matching form is not medical advice. Symptom text is processed only for the request and is neither logged nor stored in the browser profile.
+The in-memory demonstration fixtures are labelled **DEMO DATA** and are not part of the public API dataset. The API's current public dataset contains one verified Beijing public record sourced from `app/data/verified_beijing_hospitals.csv`; it is labelled **已核验公开信息**, is not a comprehensive hospital directory or recommendation, and should still be checked against the linked official source before use. The matching form is not medical advice. Symptom text is processed only for the request and is neither logged nor stored in the browser profile.
 
 ## Start locally
 

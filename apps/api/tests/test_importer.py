@@ -16,8 +16,8 @@ def row(**overrides: str) -> dict[str, str]:
         'tier': 'tertiary',
         'source_url': 'https://source.test/pilot-1',
         'source_date': '2026-08-01',
-        'specialties': 'cardiology',
-        'disease_tags': 'chest-pain',
+        'specialties': '心血管内科',
+        'disease_tags': '冠心病',
         'verified': 'true',
         'published': 'true',
     }
@@ -45,6 +45,20 @@ def test_load_verified_beijing_rows_rejects_unpublished_row(tmp_path):
     write_rows(path, [row(published='false')])
 
     with pytest.raises(ValueError, match='published'):
+        load_verified_beijing_rows(path, date(2026, 8, 6))
+
+
+@pytest.mark.parametrize(('field', 'value'), [
+    ('specialties', '|'),
+    ('disease_tags', '|'),
+    ('specialties', 'unknown-specialty'),
+    ('disease_tags', 'unknown-disease'),
+])
+def test_load_verified_beijing_rows_rejects_invalid_publish_tokens(tmp_path, field, value):
+    path = tmp_path / 'publish.csv'
+    write_rows(path, [row(**{field: value})])
+
+    with pytest.raises(ValueError, match=field):
         load_verified_beijing_rows(path, date(2026, 8, 6))
 
 

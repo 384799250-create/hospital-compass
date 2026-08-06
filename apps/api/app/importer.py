@@ -4,9 +4,15 @@ from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
+from app.matcher import SPECIALTY_KEYWORDS
+
 
 PILOT_CITIES = frozenset({'Beijing', 'Shanghai', 'Guangzhou'})
 VALID_TIERS = frozenset({'primary', 'secondary', 'tertiary'})
+PUBLISH_TOKEN_VOCABULARIES = {
+    'specialties': frozenset(SPECIALTY_KEYWORDS.values()),
+    'disease_tags': frozenset(SPECIALTY_KEYWORDS),
+}
 MAX_SOURCE_AGE = timedelta(days=180)
 IMPORT_COLUMNS = (
     'id', 'name', 'city', 'tier', 'source_url', 'source_date',
@@ -46,7 +52,22 @@ def load_verified_beijing_rows(path: Path, today: date) -> list[dict[str, str]]:
     if report.errors:
         invalid_fields = sorted({field for error in report.errors for field in error.fields})
         raise ValueError(f'publish list contains invalid rows: {", ".join(invalid_fields)}')
+    invalid_token_fields = {
+        field
+        for row in report.accepted
+        for field, vocabulary in PUBLISH_TOKEN_VOCABULARIES.items()
+        if not _has_only_supported_tokens(row[field], vocabulary)
+    }
+    if invalid_token_fields:
+        raise ValueError(
+            f'publish list contains invalid rows: {", ".join(sorted(invalid_token_fields))}'
+        )
     return report.accepted
+
+
+def _has_only_supported_tokens(value: str, vocabulary: frozenset[str]) -> bool:
+    tokens = [part.strip() for part in value.split('|')]
+    return all(tokens) and all(token in vocabulary for token in tokens)
 
 
 def validate_import(rows: list[dict[str, str]], today: date) -> ImportReport:

@@ -1,12 +1,18 @@
+from datetime import date
+
 from fastapi.testclient import TestClient
 import pytest
 
-from app.main import app
+from app.main import app, current_date
 
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    app.dependency_overrides[current_date] = lambda: date(2026, 8, 6)
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_health_returns_ok(client):
