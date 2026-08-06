@@ -2,6 +2,10 @@ from dataclasses import dataclass
 from datetime import date
 
 
+# This draft file is deliberately not loaded into the public demo dataset.
+PILOT_DRAFT_CSV_PATH = 'app/data/pilot_hospitals.csv'
+
+
 @dataclass(frozen=True)
 class DemoHospital:
     """In-memory demo data only; it is not a directory of real hospitals."""
