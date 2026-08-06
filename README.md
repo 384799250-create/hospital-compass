@@ -32,6 +32,12 @@ To check the production bundle locally, run `npm run build` followed by `npm sta
 
 Favorites contain only hospital IDs. Browser-local profile data uses the `hospital-compass-profile` local-storage key and may be cleared with **Clear local data**. No server-side profile is created.
 
+## Pilot hospital data operations
+
+Use `POST /admin/import-preview` with UTF-8 CSV text to validate, in memory only, the columns in `data/pilot-hospital-import-template.csv`: `id`, `name`, `city`, `tier`, `source_url`, `source_date`, `specialties`, `disease_tags`, `verified`, and `published`. The endpoint returns an accepted count and row-level validation errors; it neither stores nor publishes submitted records.
+
+Operator sequence: preview → source verification → reviewer approval → publication. The current 30 pilot hospital records are unverified, unpublished drafts. They are not public and do not enter matching until they have been verified and approved for publication.
+
 ## Production operating requirements
 
 Production deployment requires MFA and role-based access control (RBAC) for administrative access. Keep encrypted daily backups with an RPO of 24 hours and RTO of 4 hours. The API target is a 99.5% availability SLO. If map data is unavailable, show the hospital address and official URL as the fallback.

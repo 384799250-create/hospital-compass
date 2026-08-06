@@ -1,4 +1,6 @@
 import logging
+import csv
+from io import StringIO
 from datetime import date
 from uuid import uuid4
 
@@ -8,10 +10,16 @@ from fastapi.responses import JSONResponse
 
 from app.matcher import is_public_record, match
 from app.data import DEMO_HOSPITALS
+from app.importer import validate_import
 from app.schemas import MatchRequest
 
 logger = logging.getLogger(__name__)
 app = FastAPI()
+IMPORT_COLUMNS = (
+    'id', 'name', 'city', 'tier', 'source_url', 'source_date',
+    'specialties', 'disease_tags', 'verified', 'published',
+)
+MAX_IMPORT_PREVIEW_BYTES = 1024 * 1024
 
 
 def current_date() -> date:
@@ -42,6 +50,31 @@ async def invalid_request_handler(request: Request, exc: RequestValidationError)
 @app.get('/health')
 async def health():
     return {'status': 'ok'}
+
+
+@app.post('/admin/import-preview')
+async def import_preview(request: Request, as_of: date = Depends(current_date)):
+    """Validate a CSV upload in memory without publishing or retaining it."""
+    content = await request.body()
+    if len(content) > MAX_IMPORT_PREVIEW_BYTES:
+        raise HTTPException(status_code=400, detail='Import preview payload exceeds 1 MB')
+    try:
+        reader = csv.DictReader(StringIO(content.decode('utf-8')))
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail='Import preview must be UTF-8 CSV') from None
+
+    rows = [
+        {column: (raw.get(column) or '') for column in IMPORT_COLUMNS}
+        for raw in reader
+    ]
+    report = validate_import(rows, as_of)
+    errors = [
+        {'row': error.row_number + 1, 'fields': list(error.fields), 'error': 'Validation failed'}
+        for error in report.errors
+    ]
+    if not rows:
+        errors.append({'row': 1, 'fields': list(IMPORT_COLUMNS), 'error': 'Validation failed'})
+    return {'accepted_count': len(report.accepted), 'errors': errors}
 
 
 @app.post('/v1/matches')
