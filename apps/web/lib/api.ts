@@ -28,6 +28,7 @@ export type PendingCandidate = {
   city: string;
   direction: string;
   reason: string;
+  placeholder?: boolean;
 };
 
 export type AIMatchResponse = MatchResponse & {

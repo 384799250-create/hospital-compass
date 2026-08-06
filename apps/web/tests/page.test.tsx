@@ -100,6 +100,7 @@ describe('patient matching page', () => {
         city: '上海',
         direction: '神经内科',
         reason: '名称可能与头痛就医方向相关，需人工核验。',
+        placeholder: false,
         score: 99,
         address: '不应展示的地址',
         phone: '400-000-0000',
@@ -120,13 +121,51 @@ describe('patient matching page', () => {
     expect(candidateCard?.textContent).toContain('上海');
     expect(candidateCard?.textContent).toContain('神经内科');
     expect(candidateCard?.textContent).toContain('名称可能与头痛就医方向相关，需人工核验。');
-    expect(candidateCard?.textContent).toContain('待人工核验的候选医疗机构');
+    expect(candidateCard?.textContent).toContain('待人工核验');
     expect(candidateCard?.textContent).not.toContain('99');
     expect(candidateCard?.textContent).not.toContain('不应展示的地址');
     expect(candidateCard?.textContent).not.toContain('400-000-0000');
     expect(candidateCard?.textContent).not.toContain('https://example.test/not-for-display');
     expect(candidateCard?.textContent).not.toContain('收藏');
     expect(candidateCard?.textContent).not.toContain('推荐');
+  });
+
+  it('labels an AI direction placeholder and never presents it as a real institution', async () => {
+    vi.mocked(aiMatchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: ['眼科'],
+      score_version: 'demo-v1',
+      results: [],
+      ai: { used: true, summary: '已整理出眼科方向。', directions: ['眼科'], fallback: false },
+      pending_candidates: [{
+        name: '眼科候选医疗机构',
+        city: '全国',
+        direction: '眼科',
+        reason: 'AI 已整理出就医方向；此为流程占位，非真实机构名称，待补充或人工核验。',
+        placeholder: true,
+        score: 99,
+        address: '不应展示的地址',
+        phone: '400-000-0000',
+        source_url: 'https://example.test/not-for-display',
+      }],
+    } as unknown as Awaited<ReturnType<typeof aiMatchHospitals>>);
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '持续眼睛疼');
+    await user.click(screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' }));
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    const candidateCard = (await screen.findByRole('heading', { name: '眼科候选医疗机构' })).closest('article');
+    expect(candidateCard).not.toBeNull();
+    expect(candidateCard?.textContent).toContain('AI 方向占位');
+    expect(candidateCard?.textContent).toContain('非真实机构名称');
+    expect(candidateCard?.textContent).not.toContain('待人工核验的候选医疗机构');
+    expect(candidateCard?.textContent).not.toContain('收藏');
+    expect(candidateCard?.textContent).not.toContain('评分');
+    expect(candidateCard?.textContent).not.toContain('不应展示的地址');
+    expect(candidateCard?.textContent).not.toContain('400-000-0000');
+    expect(candidateCard?.textContent).not.toContain('https://example.test/not-for-display');
   });
 
   it('does not render the pending-candidate section for an empty candidate list', async () => {

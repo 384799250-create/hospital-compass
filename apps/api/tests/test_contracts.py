@@ -167,6 +167,7 @@ def test_ai_match_openapi_declares_ai_metadata_response(client):
         'city',
         'direction',
         'reason',
+        'placeholder',
     }
     assert set(schemas['PendingCandidate']['required']) == {
         'name',

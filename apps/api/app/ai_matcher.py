@@ -23,6 +23,8 @@ _PROHIBITED_NAME_ADDRESS_PATTERN = re.compile(r'[路街号]')
 _DETAILED_CITY_ADDRESS_PATTERN = re.compile(r'[路街号]|[省市].*(?:区|县)')
 _SUB_CITY_PATTERN = re.compile(r'(?:区|县)$')
 _PROHIBITED_MEDICAL_ADVICE_PATTERN = re.compile(r'诊断|治疗|用药|服用|手术|处方')
+_AI_PENDING_CANDIDATE_FIELDS = frozenset({'name', 'city', 'direction', 'reason'})
+_PLACEHOLDER_REASON = 'AI 已整理出就医方向；此为流程占位，非真实机构名称，待补充或人工核验。'
 SYSTEM_PROMPT = (
     '只返回 JSON object：summary 是最多 240 字符的字符串，'
     'directions 是建议专科方向的字符串数组；pending_candidates 是可选数组，'
@@ -53,6 +55,7 @@ class PendingCandidate(BaseModel):
     city: StrictStr = Field(min_length=1, max_length=40)
     direction: StrictStr = Field(min_length=1, max_length=40)
     reason: StrictStr = Field(min_length=1, max_length=180)
+    placeholder: bool = False
 
     @field_validator('name', 'city', 'direction', 'reason', mode='before')
     @classmethod
@@ -139,9 +142,12 @@ def ai_match(
         return _fallback(local)
 
     matched = match_directions(directions, city, priority, hospitals=hospitals, as_of=as_of)
+    visible_candidates = [] if matched.results else pending_candidates
+    if not matched.results and not pending_candidates:
+        visible_candidates = _direction_placeholders(directions, city)
     return AIMatchResponse(
         **matched.model_dump(),
-        pending_candidates=[] if matched.results else pending_candidates,
+        pending_candidates=visible_candidates,
         ai=AIMetadata(
             used=True,
             summary=ai_payload.summary,
@@ -154,11 +160,18 @@ def ai_match(
 def _clean_pending_candidates(raw_candidates: list[object]) -> list[PendingCandidate]:
     candidates = []
     for raw_candidate in raw_candidates:
+        if isinstance(raw_candidate, dict) and set(raw_candidate) != _AI_PENDING_CANDIDATE_FIELDS:
+            continue
         try:
             candidate = PendingCandidate.model_validate(raw_candidate)
         except ValidationError:
             continue
-        display_values = candidate.model_dump().values()
+        display_values = (
+            candidate.name,
+            candidate.city,
+            candidate.direction,
+            candidate.reason,
+        )
         has_prohibited_content = any(
             pattern.search(value)
             for value in display_values
@@ -181,6 +194,23 @@ def _clean_pending_candidates(raw_candidates: list[object]) -> list[PendingCandi
         if len(candidates) == 3:
             break
     return candidates
+
+
+def _direction_placeholders(
+    directions: list[str],
+    city: str | None,
+) -> list[PendingCandidate]:
+    placeholder_city = city.strip() if city and city.strip() else '全国'
+    return [
+        PendingCandidate(
+            name=f'{direction}候选医疗机构',
+            city=placeholder_city,
+            direction=direction,
+            reason=_PLACEHOLDER_REASON,
+            placeholder=True,
+        )
+        for direction in directions[:3]
+    ]
 
 
 def _fallback(local: MatchResponse) -> AIMatchResponse:

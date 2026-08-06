@@ -52,6 +52,16 @@ def assert_local_fallback(response):
     assert response.pending_candidates == []
 
 
+def assert_direction_placeholder(response, *, direction='心血管内科', city='上海'):
+    assert [candidate.model_dump() for candidate in response.pending_candidates] == [{
+        'name': f'{direction}候选医疗机构',
+        'city': city,
+        'direction': direction,
+        'reason': 'AI 已整理出就医方向；此为流程占位，非真实机构名称，待补充或人工核验。',
+        'placeholder': True,
+    }]
+
+
 def test_successful_deepseek_json_matches_filtered_direction_with_json_mode():
     captured = {}
 
@@ -152,6 +162,90 @@ def test_compliant_pending_candidates_are_returned_when_no_verified_results_exis
         'city': '上海',
         'direction': '心血管内科',
         'reason': '名称可能与所需专科方向相关，需人工核验。',
+        'placeholder': False,
+    }]
+
+
+def test_successful_ai_directions_generate_local_placeholders_after_candidates_are_cleaned_out():
+    transport_calls = 0
+
+    def transport(request, timeout):
+        nonlocal transport_calls
+        transport_calls += 1
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '已整理出三个就医方向。',
+            'directions': ['心血管内科', '眼科', '耳鼻咽喉头颈外科'],
+            'pending_candidates': [{
+                'name': '带地址的不安全候选',
+                'city': '杭州市西湖区',
+                'direction': '心血管内科',
+                'reason': '待核验。',
+            }],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='需要多个方向',
+        city='杭州',
+        priority='overall',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert transport_calls == 1
+    assert response.ai.used is True
+    assert response.results == []
+    assert [candidate.model_dump() for candidate in response.pending_candidates] == [
+        {
+            'name': '心血管内科候选医疗机构',
+            'city': '杭州',
+            'direction': '心血管内科',
+            'reason': 'AI 已整理出就医方向；此为流程占位，非真实机构名称，待补充或人工核验。',
+            'placeholder': True,
+        },
+        {
+            'name': '眼科候选医疗机构',
+            'city': '杭州',
+            'direction': '眼科',
+            'reason': 'AI 已整理出就医方向；此为流程占位，非真实机构名称，待补充或人工核验。',
+            'placeholder': True,
+        },
+        {
+            'name': '耳鼻咽喉头颈外科候选医疗机构',
+            'city': '杭州',
+            'direction': '耳鼻咽喉头颈外科',
+            'reason': 'AI 已整理出就医方向；此为流程占位，非真实机构名称，待补充或人工核验。',
+            'placeholder': True,
+        },
+    ]
+
+
+def test_ai_direction_placeholder_uses_nationwide_when_city_is_missing():
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '已整理出就医方向。',
+            'directions': ['眼科'],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续眼睛疼',
+        city=None,
+        priority='overall',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert [candidate.model_dump() for candidate in response.pending_candidates] == [{
+        'name': '眼科候选医疗机构',
+        'city': '全国',
+        'direction': '眼科',
+        'reason': 'AI 已整理出就医方向；此为流程占位，非真实机构名称，待补充或人工核验。',
+        'placeholder': True,
     }]
 
 
@@ -188,6 +282,7 @@ def test_pending_candidate_accepts_unknown_direction_and_city_suffix():
         'city': '北京市',
         'direction': '神经内科',
         'reason': '名称可能与所需专科方向相关，需人工核验。',
+        'placeholder': False,
     }]
 
 
@@ -236,6 +331,7 @@ def test_compliant_medical_entity_is_preserved_and_prohibited_content_is_dropped
         'city': '上海',
         'direction': '神经内科',
         'reason': '名称可能与头痛就医方向相关，需人工核验。',
+        'placeholder': False,
     }]
 
 
@@ -284,6 +380,7 @@ def test_invalid_pending_candidates_are_dropped_without_failing_the_ai_match():
         {**valid_candidate, 'name': '医' * 81},
         {**valid_candidate, 'city': '城' * 41},
         {**valid_candidate, 'reason': '因' * 181},
+        {**valid_candidate, 'placeholder': True},
     ]
 
     def transport(request, timeout):
@@ -307,7 +404,7 @@ def test_invalid_pending_candidates_are_dropped_without_failing_the_ai_match():
     assert response.ai.used is True
     assert response.results == []
     assert [candidate.model_dump() for candidate in response.pending_candidates] == [
-        valid_candidate,
+        {**valid_candidate, 'placeholder': False},
     ]
 
 
@@ -380,7 +477,7 @@ def test_pending_candidate_is_dropped_when_reason_contains_prohibited_content(un
 
     assert response.ai.used is True
     assert response.results == []
-    assert response.pending_candidates == []
+    assert_direction_placeholder(response)
 
 
 @pytest.mark.parametrize(
@@ -415,7 +512,7 @@ def test_pending_candidate_is_dropped_when_another_display_field_contains_prohib
         transport=transport,
     )
 
-    assert response.pending_candidates == []
+    assert_direction_placeholder(response)
 
 
 @pytest.mark.parametrize(
@@ -521,6 +618,7 @@ def test_pending_candidates_are_trimmed_and_limited_to_three_valid_items():
             'city': '上海',
             'direction': '心血管内科',
             'reason': '仅供人工核验。',
+            'placeholder': False,
         }
         for number in range(1, 4)
     ]

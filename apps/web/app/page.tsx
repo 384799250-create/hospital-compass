@@ -97,6 +97,7 @@ export default function Page() {
   const pendingCandidates = aiResponse && !aiResponse.emergency && recommendations.length === 0
     ? aiResponse.pending_candidates
     : null;
+  const hasDirectionPlaceholders = pendingCandidates?.some((candidate) => candidate.placeholder) ?? false;
   const matchStatus = ai?.used && ai.summary
     ? { title: 'AI 已整理', summary: ai.summary }
     : response && !response.emergency
@@ -194,7 +195,10 @@ export default function Page() {
       {pendingCandidates && pendingCandidates.length > 0 && (
         <section aria-labelledby="pending-candidates-title" className={styles.pendingCandidates}>
           <header className={styles.pendingHeader}><div><span>03</span><h2 id="pending-candidates-title">待人工核验的候选医疗机构</h2></div></header>
-          <p>这些候选医疗机构由 AI 生成，仅用于流程体验；请通过医疗机构官网或主管部门核验后再作为就医信息参考。</p>
+          <p>{hasDirectionPlaceholders
+            ? 'AI 方向占位仅用于流程体验，不代表真实医疗机构；待补充或人工核验。'
+            : '这些候选医疗机构由 AI 生成，仅用于流程体验；请通过医疗机构官网或主管部门核验后再作为就医信息参考。'}
+          </p>
           <div className={styles.pendingCards}>
             {pendingCandidates.map((candidate) => (
               <article className={styles.pendingCard} key={`${candidate.name}-${candidate.city}`}>
@@ -204,7 +208,8 @@ export default function Page() {
                   <div><dt>就医方向</dt><dd>{candidate.direction}</dd></div>
                   <div><dt>候选理由</dt><dd>{candidate.reason}</dd></div>
                 </dl>
-                <span>待人工核验的候选医疗机构</span>
+                {candidate.placeholder && <p>非真实机构名称</p>}
+                <span>{candidate.placeholder ? 'AI 方向占位' : '待人工核验'}</span>
               </article>
             ))}
           </div>
