@@ -39,6 +39,7 @@ def match(
     city: str | None,
     priority: Literal['overall', 'specialty', 'convenience'],
     *,
+    hospitals: tuple[DemoHospital, ...] | None = None,
     as_of: date | None = None,
 ) -> MatchResponse:
     """Return deterministic demo-data matches without retaining the query."""
@@ -51,9 +52,10 @@ def match(
 
     effective_date = as_of or date.today()
     specialty_weight, capability_weight, geography_weight, freshness_weight = _weights_for(priority, city)
+    hospital_collection = DEMO_HOSPITALS if hospitals is None else hospitals
     eligible = (
         hospital
-        for hospital in DEMO_HOSPITALS
+        for hospital in hospital_collection
         if is_public_record(hospital, as_of=effective_date)
         and any(direction in hospital.specialties for direction in directions)
     )

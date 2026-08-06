@@ -18,3 +18,28 @@ def test_blank_query_returns_invalid_request(client):
 
     assert response.status_code == 400
     assert response.json()['code'] == 'INVALID_REQUEST'
+
+
+def test_verified_beijing_publish_list_is_the_only_public_api_dataset(client):
+    response = client.post('/v1/matches', json={
+        'query': '冠心病',
+        'city': 'Beijing',
+        'priority': 'overall',
+    })
+
+    assert response.status_code == 200
+    assert response.json()['results'] == [{
+        'id': 'beijing-pumch',
+        'name': '北京协和医院',
+        'city': 'Beijing',
+        'demo_label': '已核验公开信息',
+        'score': 10.0,
+        'specialties': ['心血管内科'],
+        'score_reasons': ['来源信息在有效期内'],
+        'source_date': '2026-08-06',
+    }]
+
+    detail = client.get('/v1/hospitals/beijing-pumch')
+
+    assert detail.status_code == 200
+    assert detail.json()['id'] == 'beijing-pumch'

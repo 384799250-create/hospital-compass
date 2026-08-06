@@ -2,6 +2,7 @@ import logging
 import csv
 from io import StringIO
 from datetime import date
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -9,7 +10,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.matcher import is_public_record, match
-from app.data import DEMO_HOSPITALS
+from app.data import verified_row_to_hospital
+from app.importer import load_verified_beijing_rows
 from app.importer import validate_import
 from app.schemas import MatchRequest
 
@@ -20,6 +22,11 @@ IMPORT_COLUMNS = (
     'specialties', 'disease_tags', 'verified', 'published',
 )
 MAX_IMPORT_PREVIEW_BYTES = 1024 * 1024
+VERIFIED_BEIJING_PUBLISH_LIST_PATH = Path(__file__).parent / 'data' / 'verified_beijing_hospitals.csv'
+PUBLIC_HOSPITALS = tuple(
+    verified_row_to_hospital(row)
+    for row in load_verified_beijing_rows(VERIFIED_BEIJING_PUBLISH_LIST_PATH, date.today())
+)
 
 
 def current_date() -> date:
@@ -93,7 +100,7 @@ async def import_preview(request: Request, as_of: date = Depends(current_date)):
 
 @app.post('/v1/matches')
 async def matches(request: MatchRequest, as_of: date = Depends(current_date)):
-    return match(request.query, request.city, request.priority, as_of=as_of)
+    return match(request.query, request.city, request.priority, hospitals=PUBLIC_HOSPITALS, as_of=as_of)
 
 
 @app.get('/v1/hospitals/{hospital_id}')
@@ -101,7 +108,7 @@ async def hospital_detail(hospital_id: str, as_of: date = Depends(current_date))
     hospital = next(
         (
             item
-            for item in DEMO_HOSPITALS
+            for item in PUBLIC_HOSPITALS
             if item.id == hospital_id and is_public_record(item, as_of=as_of)
         ),
         None,

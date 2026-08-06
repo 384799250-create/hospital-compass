@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date
+from typing import Mapping
 
 
 # This draft file is deliberately not loaded into the public demo dataset.
@@ -22,6 +23,24 @@ class DemoHospital:
     verified: bool = True
     demo_label: str = 'DEMO DATA'
     id: str = ''
+
+
+def verified_row_to_hospital(row: Mapping[str, str]) -> DemoHospital:
+    """Adapt one validated public-list row to the matching data shape."""
+    return DemoHospital(
+        id=row['id'],
+        name=row['name'],
+        pinyin_name=row['id'],
+        city=row['city'],
+        specialties=tuple(part.strip() for part in row['specialties'].split('|') if part.strip()),
+        specialty_score=None,
+        capability_score=None,
+        geography_score=None,
+        source_date=date.fromisoformat(row['source_date']),
+        published=row['published'] == 'true',
+        verified=row['verified'] == 'true',
+        demo_label='已核验公开信息',
+    )
 
 
 DEMO_HOSPITALS = (
