@@ -105,6 +105,8 @@ def test_successful_deepseek_json_matches_filtered_direction_with_json_mode():
                         '只返回 JSON object：summary 是最多 240 字符的字符串，'
                         'directions 是建议专科方向的字符串数组；pending_candidates 是可选数组，'
                         '每项只能包含 name、city、direction、reason，且最多返回 3 项。'
+                        '候选必须是中国医院的完整名称且以“医院”结尾；不确定时返回空数组；'
+                        '不允许科室、门诊、诊所或中心名称。'
                         '候选仅是待人工核验的名称，不是已核验推荐；不得提供诊断或治疗建议；'
                         '不得编造地址、电话或来源链接。'
                     ),
@@ -149,6 +151,42 @@ def test_compliant_pending_candidates_are_returned_when_no_verified_results_exis
         'name': '待核验医院',
         'city': '上海',
         'direction': '心血管内科',
+        'reason': '名称可能与所需专科方向相关，需人工核验。',
+    }]
+
+
+def test_pending_candidate_accepts_unknown_direction_and_city_suffix():
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '暂无已核验匹配，保留待核验候选。',
+            'directions': ['神经内科'],
+            'pending_candidates': [{
+                'name': '北京大学第一医院',
+                'city': '北京市',
+                'direction': '神经内科',
+                'reason': '名称可能与所需专科方向相关，需人工核验。',
+            }],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续头痛',
+        city='北京市',
+        priority='specialty',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.ai.used is True
+    assert response.ai.directions == []
+    assert response.directions == []
+    assert response.results == []
+    assert [candidate.model_dump() for candidate in response.pending_candidates] == [{
+        'name': '北京大学第一医院',
+        'city': '北京市',
+        'direction': '神经内科',
         'reason': '名称可能与所需专科方向相关，需人工核验。',
     }]
 
@@ -232,8 +270,10 @@ def test_invalid_pending_candidates_are_dropped_without_failing_the_ai_match():
         'not-an-object',
         {**valid_candidate, 'address': '不得返回的地址'},
         {**valid_candidate, 'name': 42},
+        {**valid_candidate, 'name': '神经内科门诊'},
         {**valid_candidate, 'city': '   '},
-        {**valid_candidate, 'direction': '未知科室'},
+        {**valid_candidate, 'direction': '   '},
+        {**valid_candidate, 'direction': '科' * 41},
         {**valid_candidate, 'name': '医' * 81},
         {**valid_candidate, 'city': '城' * 41},
         {**valid_candidate, 'reason': '因' * 181},
@@ -280,6 +320,8 @@ def test_invalid_pending_candidates_are_dropped_without_failing_the_ai_match():
         '位于平安街',
         '门牌 10 号',
         '推荐前往该院核验',
+        '诊断为偏头痛',
+        '可服用止痛药治疗',
         '联系人张医生',
         '微信 doctor123',
         '邮箱 doctor@example.cn',
@@ -298,6 +340,8 @@ def test_invalid_pending_candidates_are_dropped_without_failing_the_ai_match():
         'street-address-cue',
         'number-address-cue',
         'recommendation-wording',
+        'diagnosis-advice',
+        'treatment-advice',
         'contact-person',
         'wechat-contact',
         'email-contact',
@@ -332,7 +376,11 @@ def test_pending_candidate_is_dropped_when_reason_contains_prohibited_content(un
     assert response.pending_candidates == []
 
 
-@pytest.mark.parametrize('field', ['name', 'city'], ids=['name', 'city'])
+@pytest.mark.parametrize(
+    'field',
+    ['name', 'city', 'direction'],
+    ids=['name', 'city', 'direction'],
+)
 def test_pending_candidate_is_dropped_when_another_display_field_contains_prohibited_content(field):
     candidate = {
         'name': '待核验医院',
@@ -363,6 +411,39 @@ def test_pending_candidate_is_dropped_when_another_display_field_contains_prohib
     assert response.pending_candidates == []
 
 
+@pytest.mark.parametrize(
+    'detailed_city',
+    ['北京市朝阳区', '健康路 10 号', '南京市鼓楼区中山路'],
+    ids=['city-district', 'road-number', 'city-district-road'],
+)
+def test_pending_candidate_is_dropped_when_city_contains_detailed_address(detailed_city):
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '暂无已核验匹配。',
+            'directions': [],
+            'pending_candidates': [{
+                'name': '待核验医院',
+                'city': detailed_city,
+                'direction': '神经内科',
+                'reason': '名称可能与所需专科方向相关，需人工核验。',
+            }],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续头痛',
+        city='北京市',
+        priority='overall',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.pending_candidates == []
+    assert response.ai.fallback is True
+
+
 def test_pending_candidates_are_trimmed_and_limited_to_three_valid_items():
     def transport(request, timeout):
         return FakeResponse(deepseek_payload(json.dumps({
@@ -370,7 +451,7 @@ def test_pending_candidates_are_trimmed_and_limited_to_three_valid_items():
             'directions': ['心血管内科'],
             'pending_candidates': [
                 {
-                    'name': f'  待核验医院{number}  ',
+                    'name': f'  待核验{number}医院  ',
                     'city': '  上海  ',
                     'direction': '  心血管内科  ',
                     'reason': '  仅供人工核验。  ',
@@ -392,7 +473,7 @@ def test_pending_candidates_are_trimmed_and_limited_to_three_valid_items():
 
     assert [candidate.model_dump() for candidate in response.pending_candidates] == [
         {
-            'name': f'待核验医院{number}',
+            'name': f'待核验{number}医院',
             'city': '上海',
             'direction': '心血管内科',
             'reason': '仅供人工核验。',
