@@ -2,7 +2,7 @@
 
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 
-import { MatchApiError, MatchResponse, matchHospitals } from '../lib/api';
+import { AIMatchResponse, MatchApiError, MatchResponse, aiMatchHospitals, matchHospitals } from '../lib/api';
 import { addFavorite, clearProfile, getProfile, removeFavorite } from '../lib/local-profile';
 import styles from './page.module.css';
 
@@ -12,7 +12,8 @@ export default function Page() {
   const [query, setQuery] = useState('');
   const [city, setCity] = useState('');
   const [priority, setPriority] = useState<'overall' | 'specialty' | 'convenience'>('overall');
-  const [response, setResponse] = useState<MatchResponse | null>(null);
+  const [aiConsent, setAiConsent] = useState(false);
+  const [response, setResponse] = useState<(MatchResponse | AIMatchResponse) | null>(null);
   const [showEmergency, setShowEmergency] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -43,11 +44,14 @@ export default function Page() {
     setLoading(true);
 
     try {
-      const nextResponse = await matchHospitals({
+      const input = {
         query,
         city: city || undefined,
         priority,
-      });
+      };
+      const nextResponse = aiConsent
+        ? await aiMatchHospitals({ ...input, ai_consent: true })
+        : await matchHospitals(input);
       setResponse(nextResponse);
       setShowEmergency(nextResponse.emergency);
     } catch (requestError) {
@@ -88,13 +92,20 @@ export default function Page() {
 
   const recommendations = response && !response.emergency ? response.results : [];
   const hasNoMatches = response && !response.emergency && response.results.length === 0;
+  const ai = response && 'ai' in response ? response.ai : null;
+  const matchStatus = ai?.used && ai.summary
+    ? { title: 'AI 已整理', summary: ai.summary }
+    : response && !response.emergency
+      ? { title: '已按本地规则匹配', summary: null }
+      : null;
 
   return (
     <main className={styles.page} inert={showEmergency}>
       <nav className={styles.nav} aria-label="主导航">
         <span className={styles.brand}>医途</span>
         <span>医院信息导航</span>
-        <button type="button" className={styles.clearProfile} onClick={clearLocalData}>Clear local data</button>
+        <div className={styles.navLinks} aria-label="页面导航"><a href="#match">智能匹配</a><a href="#results">医院目录</a><a href="#guide">使用说明</a></div>
+        <button type="button" className={styles.clearProfile} onClick={clearLocalData}>清除本机数据</button>
       </nav>
 
       <section className={styles.hero} aria-labelledby="page-title">
@@ -103,6 +114,7 @@ export default function Page() {
           <h1 id="page-title">找到更适合的医院信息</h1>
           <p className={styles.disclaimer}>本工具仅供查找演示医院信息，不提供诊断、治疗或疗效建议。</p>
         </div>
+        <div className={styles.heroStats} aria-label="平台数据概览"><div><strong>31</strong><span>个省级行政区覆盖规划</span></div><div><strong>3</strong><span>项核心匹配维度</span></div></div>
         <div className={styles.artwork} aria-hidden="true"><i /><b /><em /></div>
       </section>
 
@@ -115,8 +127,29 @@ export default function Page() {
           <select id="city" name="city" value={city} onChange={(event) => setCity(event.target.value)}><option value="">不限城市</option><option value="上海">上海</option><option value="杭州">杭州</option></select>
           <label htmlFor="priority">匹配偏好</label>
           <select id="priority" name="priority" value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}><option value="overall">综合信息</option><option value="specialty">专科方向</option><option value="convenience">就近便利</option></select>
+          <div className={styles.aiConsent}>
+            <label htmlFor="ai-consent"><input id="ai-consent" type="checkbox" checked={aiConsent} onChange={(event) => setAiConsent(event.target.checked)} />同意将本次描述发送给 DeepSeek 进行就医方向整理</label>
+            <p>AI 仅整理就医方向，不提供诊断或治疗建议。</p>
+          </div>
           <button ref={submitButtonRef} type="submit" disabled={loading}>{loading ? '匹配中…' : '开始匹配'}</button>
         </form>
+        <div className={styles.quickTags}><span>常见就医方向：</span><button type="button" onClick={() => setQuery('冠心病')}>心血管疾病</button><button type="button" onClick={() => setQuery('儿童发热咳嗽')}>儿童发热咳嗽</button><button type="button" onClick={() => setQuery('肿瘤治疗')}>肿瘤治疗</button><button type="button" onClick={() => setQuery('关节疼痛')}>关节疼痛</button></div>
+      </section>
+
+      <section className={styles.overview} aria-label="平台信息概览">
+        <div><span>覆盖规划</span><strong>31</strong><small>个省级行政区</small></div>
+        <div><span>核心匹配维度</span><strong>03</strong><small>专科 · 便利 · 数据时效</small></div>
+        <div><span>使用方式</span><strong>3 min</strong><small>描述情况、比较医院、保存候选</small></div>
+        <aside><b>就医前建议</b><p>推荐结果仅供信息参考，请通过医院官方渠道核实门诊与服务信息。</p></aside>
+      </section>
+
+      <section className={styles.guide} aria-labelledby="guide-title">
+        <header><span>服务导航</span><h2 id="guide-title">把复杂选择，拆成清楚的三步</h2></header>
+        <ol>
+          <li><b>01</b><h3>描述情况</h3><p>输入症状、疾病或检查报告的关键结论。</p></li>
+          <li><b>02</b><h3>设定偏好</h3><p>选择城市，并说明更看重专科还是便利。</p></li>
+          <li><b>03</b><h3>比较与收藏</h3><p>查看数据日期和理由，再保存候选医院。</p></li>
+        </ol>
       </section>
 
       {error && <p className={styles.notice} role="alert">{error}</p>}
@@ -124,6 +157,7 @@ export default function Page() {
       {(recommendations.length > 0 || hasNoMatches) && (
         <section aria-labelledby="recommendations-title" className={styles.results}>
           <header className={styles.resultHeader}><div><span>02</span><h2 id="recommendations-title">匹配结果</h2></div><p>{recommendations.length > 0 ? '推荐医院' : '继续探索其他方向'}</p></header>
+          {matchStatus && <div className={styles.matchStatus}><strong>{matchStatus.title}</strong>{matchStatus.summary && <p>{matchStatus.summary}</p>}</div>}
           <p>以下为演示数据生成的信息匹配结果，请通过官方渠道核实。</p>
           {recommendations.length > 0 && <p className={styles.localOnly}>收藏仅保存在此浏览器中。</p>}
           {hasNoMatches && <article className={styles.noMatch}><div className={styles.mapPanel} aria-hidden="true"><span /><i /><b /></div><div><h3>暂未匹配到已审核医院</h3><p>可尝试补充更具体的症状、所在城市或匹配偏好。请通过官方渠道查询医院信息。</p></div></article>}

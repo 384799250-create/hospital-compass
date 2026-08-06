@@ -16,18 +16,31 @@ export type MatchResponse = {
   results: MatchResult[];
 };
 
+export type AIMetadata = {
+  used: boolean;
+  summary: string | null;
+  directions: string[];
+  fallback: boolean;
+};
+
+export type AIMatchResponse = MatchResponse & {
+  ai: AIMetadata;
+};
+
+type MatchInput = {
+  query: string;
+  city?: string;
+  priority: 'overall' | 'specialty' | 'convenience';
+};
+
 export class MatchApiError extends Error {
   constructor(public readonly status: number) {
     super(`Matching request failed with status ${status}`);
   }
 }
 
-export async function matchHospitals(input: {
-  query: string;
-  city?: string;
-  priority: 'overall' | 'specialty' | 'convenience';
-}): Promise<MatchResponse> {
-  const response = await fetch('/v1/matches', {
+async function postMatch<Response>(path: string, input: MatchInput | (MatchInput & { ai_consent: true })): Promise<Response> {
+  const response = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -37,5 +50,13 @@ export async function matchHospitals(input: {
     throw new MatchApiError(response.status);
   }
 
-  return response.json() as Promise<MatchResponse>;
+  return response.json() as Promise<Response>;
+}
+
+export function matchHospitals(input: MatchInput): Promise<MatchResponse> {
+  return postMatch<MatchResponse>('/v1/matches', input);
+}
+
+export function aiMatchHospitals(input: MatchInput & { ai_consent: true }): Promise<AIMatchResponse> {
+  return postMatch<AIMatchResponse>('/v1/ai-matches', input);
 }

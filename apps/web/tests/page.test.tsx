@@ -3,15 +3,17 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Page from '../app/page';
-import { MatchApiError, matchHospitals } from '../lib/api';
+import { MatchApiError, aiMatchHospitals, matchHospitals } from '../lib/api';
 
 vi.mock('../lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/api')>()),
+  aiMatchHospitals: vi.fn(),
   matchHospitals: vi.fn(),
 }));
 
 describe('patient matching page', () => {
   beforeEach(() => {
+    vi.mocked(aiMatchHospitals).mockReset();
     vi.mocked(matchHospitals).mockReset();
     localStorage.clear();
   });
@@ -24,6 +26,84 @@ describe('patient matching page', () => {
   function mockMatch(response: Awaited<ReturnType<typeof matchHospitals>>) {
     vi.mocked(matchHospitals).mockResolvedValue(response);
   }
+
+  it('uses the local matching endpoint by default when AI consent is unchecked', async () => {
+    mockMatch({ emergency: false, directions: [], score_version: 'demo-v1', results: [] });
+    const user = userEvent.setup();
+
+    render(<Page />);
+    const consent = screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' });
+    expect((consent as HTMLInputElement).checked).toBe(false);
+    await user.type(screen.getByLabelText('症状或疾病'), '胸痛');
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(matchHospitals).toHaveBeenCalledWith({ query: '胸痛', city: undefined, priority: 'overall' });
+    expect(aiMatchHospitals).not.toHaveBeenCalled();
+  });
+
+  it('uses the AI matching endpoint when the consent checkbox is checked', async () => {
+    vi.mocked(aiMatchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: [],
+      score_version: 'demo-v1',
+      results: [],
+      ai: { used: false, summary: null, directions: [], fallback: true },
+    });
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '胸痛');
+    await user.click(screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' }));
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(aiMatchHospitals).toHaveBeenCalledWith({
+      query: '胸痛', city: undefined, priority: 'overall', ai_consent: true,
+    });
+    expect(matchHospitals).not.toHaveBeenCalled();
+  });
+
+  it('shows the AI summary when AI matching succeeds', async () => {
+    vi.mocked(aiMatchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: [],
+      score_version: 'demo-v1',
+      results: [],
+      ai: {
+        used: true,
+        summary: '已将描述整理为心血管方向，供医院信息匹配参考。',
+        directions: ['心血管内科'],
+        fallback: false,
+      },
+    });
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '胸痛');
+    await user.click(screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' }));
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(await screen.findByText('AI 已整理')).not.toBeNull();
+    expect(screen.getByText('已将描述整理为心血管方向，供医院信息匹配参考。')).not.toBeNull();
+  });
+
+  it('shows the local matching status when AI matching falls back', async () => {
+    vi.mocked(aiMatchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: [],
+      score_version: 'demo-v1',
+      results: [],
+      ai: { used: false, summary: null, directions: [], fallback: true },
+    });
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '胸痛');
+    await user.click(screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' }));
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(await screen.findByText('已按本地规则匹配')).not.toBeNull();
+    expect(screen.queryByText('AI 已整理')).toBeNull();
+  });
 
   it('renders the branded hero and a visible no-match card', async () => {
     mockMatch({ emergency: false, directions: [], score_version: 'demo-v1', results: [] });
@@ -111,7 +191,7 @@ describe('patient matching page', () => {
     const user = userEvent.setup();
 
     render(<Page />);
-    await user.click(screen.getByRole('button', { name: 'Clear local data' }));
+    await user.click(screen.getByRole('button', { name: '清除本机数据' }));
 
     expect(localStorage.getItem('hospital-compass-profile')).toBeNull();
   });
