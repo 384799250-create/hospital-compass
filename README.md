@@ -38,6 +38,8 @@ Use `POST /admin/import-preview` with UTF-8 CSV text to validate, in memory only
 
 Operator sequence: preview → source verification → reviewer approval → publication. The current 30 pilot hospital records are unverified, unpublished drafts. They are not public and do not enter matching until they have been verified and approved for publication.
 
+`app/data/pilot_hospitals.csv` is used only for draft import testing. `app/data/verified_beijing_hospitals.csv` is the API's only current public data source. Every record in that file must be for Beijing, set `verified=true` and `published=true`, use an HTTPS source, and have a source date within the preceding 180 days.
+
 ## Production operating requirements
 
 Production deployment requires MFA and role-based access control (RBAC) for administrative access. Keep encrypted daily backups with an RPO of 24 hours and RTO of 4 hours. The API target is a 99.5% availability SLO. If map data is unavailable, show the hospital address and official URL as the fallback.
