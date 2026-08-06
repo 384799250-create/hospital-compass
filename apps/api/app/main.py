@@ -63,6 +63,20 @@ async def import_preview(request: Request, as_of: date = Depends(current_date)):
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail='Import preview must be UTF-8 CSV') from None
 
+    headers = reader.fieldnames or []
+    missing_headers = [column for column in IMPORT_COLUMNS if column not in headers]
+    unknown_headers = [header for header in headers if header not in IMPORT_COLUMNS]
+    if missing_headers or unknown_headers:
+        errors = [
+            {'row': 1, 'fields': [column], 'error': 'Missing documented CSV header'}
+            for column in missing_headers
+        ]
+        errors.extend(
+            {'row': 1, 'fields': [header], 'error': 'Unknown CSV header'}
+            for header in unknown_headers
+        )
+        return JSONResponse(status_code=400, content={'accepted_count': 0, 'errors': errors})
+
     rows = [
         {column: (raw.get(column) or '') for column in IMPORT_COLUMNS}
         for raw in reader

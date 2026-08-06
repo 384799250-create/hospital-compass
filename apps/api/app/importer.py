@@ -30,6 +30,9 @@ def validate_import(rows: list[dict[str, str]], today: date) -> ImportReport:
         if not hospital_id or hospital_id in seen_ids:
             invalid_fields.append('id')
         seen_ids.add(hospital_id)
+        name = row.get('name', '')
+        if not isinstance(name, str) or not name.strip():
+            invalid_fields.append('name')
         if row.get('city') not in PILOT_CITIES:
             invalid_fields.append('city')
         if row.get('tier') not in VALID_TIERS:
