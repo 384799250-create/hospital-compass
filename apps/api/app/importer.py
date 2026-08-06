@@ -1,11 +1,17 @@
+import csv
 from dataclasses import dataclass
 from datetime import date, timedelta
+from pathlib import Path
 from urllib.parse import urlparse
 
 
 PILOT_CITIES = frozenset({'Beijing', 'Shanghai', 'Guangzhou'})
 VALID_TIERS = frozenset({'primary', 'secondary', 'tertiary'})
-MAX_SOURCE_AGE = timedelta(days=80)
+MAX_SOURCE_AGE = timedelta(days=180)
+IMPORT_COLUMNS = (
+    'id', 'name', 'city', 'tier', 'source_url', 'source_date',
+    'specialties', 'disease_tags', 'verified', 'published',
+)
 
 
 @dataclass(frozen=True)
@@ -18,6 +24,27 @@ class ImportError:
 class ImportReport:
     accepted: list[dict[str, str]]
     errors: list[ImportError]
+
+
+def load_verified_beijing_rows(path: Path, today: date) -> list[dict[str, str]]:
+    with path.open(encoding='utf-8', newline='') as file:
+        reader = csv.DictReader(file)
+        if reader.fieldnames is None:
+            raise ValueError('publish list is empty')
+        if set(reader.fieldnames) != set(IMPORT_COLUMNS) or len(reader.fieldnames) != len(IMPORT_COLUMNS):
+            raise ValueError('publish list headers must contain exactly the required columns')
+        rows = list(reader)
+
+    if not rows:
+        raise ValueError('publish list is empty')
+    if any(row.get('city') != 'Beijing' for row in rows):
+        raise ValueError('publish list contains a non-Beijing row')
+
+    report = validate_import(rows, today)
+    if report.errors:
+        invalid_fields = sorted({field for error in report.errors for field in error.fields})
+        raise ValueError(f'publish list contains invalid rows: {", ".join(invalid_fields)}')
+    return report.accepted
 
 
 def validate_import(rows: list[dict[str, str]], today: date) -> ImportReport:
