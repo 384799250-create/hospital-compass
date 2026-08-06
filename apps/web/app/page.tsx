@@ -92,7 +92,11 @@ export default function Page() {
 
   const recommendations = response && !response.emergency ? response.results : [];
   const hasNoMatches = response && !response.emergency && response.results.length === 0;
-  const ai = response && 'ai' in response ? response.ai : null;
+  const aiResponse = response && 'ai' in response ? response : null;
+  const ai = aiResponse?.ai ?? null;
+  const pendingCandidates = aiResponse && !aiResponse.emergency && recommendations.length === 0
+    ? aiResponse.pending_candidates
+    : null;
   const matchStatus = ai?.used && ai.summary
     ? { title: 'AI 已整理', summary: ai.summary }
     : response && !response.emergency
@@ -184,6 +188,26 @@ export default function Page() {
               </article>
             ))}
           </div>}
+        </section>
+      )}
+
+      {pendingCandidates && pendingCandidates.length > 0 && (
+        <section aria-labelledby="pending-candidates-title" className={styles.pendingCandidates}>
+          <header className={styles.pendingHeader}><div><span>03</span><h2 id="pending-candidates-title">待人工核验的候选医院</h2></div></header>
+          <p>这些候选由 AI 生成，仅用于流程体验；请通过医院官网或主管部门核验后再作为就医信息参考。</p>
+          <div className={styles.pendingCards}>
+            {pendingCandidates.map((candidate) => (
+              <article className={styles.pendingCard} key={`${candidate.name}-${candidate.city}`}>
+                <h3>{candidate.name}</h3>
+                <p>{candidate.city}</p>
+                <dl>
+                  <div><dt>就医方向</dt><dd>{candidate.direction}</dd></div>
+                  <div><dt>候选理由</dt><dd>{candidate.reason}</dd></div>
+                </dl>
+                <span>待人工核验</span>
+              </article>
+            ))}
+          </div>
         </section>
       )}
 

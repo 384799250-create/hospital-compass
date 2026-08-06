@@ -23,8 +23,16 @@ export type AIMetadata = {
   fallback: boolean;
 };
 
+export type PendingCandidate = {
+  name: string;
+  city: string;
+  direction: string;
+  reason: string;
+};
+
 export type AIMatchResponse = MatchResponse & {
   ai: AIMetadata;
+  pending_candidates: PendingCandidate[];
 };
 
 type MatchInput = {

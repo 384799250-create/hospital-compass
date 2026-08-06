@@ -48,6 +48,7 @@ describe('patient matching page', () => {
       score_version: 'demo-v1',
       results: [],
       ai: { used: false, summary: null, directions: [], fallback: true },
+      pending_candidates: [],
     });
     const user = userEvent.setup();
 
@@ -74,6 +75,7 @@ describe('patient matching page', () => {
         directions: ['心血管内科'],
         fallback: false,
       },
+      pending_candidates: [],
     });
     const user = userEvent.setup();
 
@@ -86,6 +88,91 @@ describe('patient matching page', () => {
     expect(screen.getByText('已将描述整理为心血管方向，供医院信息匹配参考。')).not.toBeNull();
   });
 
+  it('renders a pending-candidate section with only the safe candidate fields', async () => {
+    vi.mocked(aiMatchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: [],
+      score_version: 'demo-v1',
+      results: [],
+      ai: { used: true, summary: null, directions: [], fallback: false },
+      pending_candidates: [{
+        name: '待核验医院',
+        city: '上海',
+        direction: '心血管内科',
+        reason: '名称可能与所需专科方向相关，需人工核验。',
+        score: 99,
+        address: '不应展示的地址',
+        phone: '400-000-0000',
+        source_url: 'https://example.test/not-for-display',
+      }],
+    } as unknown as Awaited<ReturnType<typeof aiMatchHospitals>>);
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '持续心悸');
+    await user.click(screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' }));
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(await screen.findByRole('heading', { name: '待人工核验的候选医院' })).not.toBeNull();
+    expect(screen.getByText('这些候选由 AI 生成，仅用于流程体验；请通过医院官网或主管部门核验后再作为就医信息参考。')).not.toBeNull();
+    const candidateCard = screen.getByRole('heading', { name: '待核验医院' }).closest('article');
+    expect(candidateCard).not.toBeNull();
+    expect(candidateCard?.textContent).toContain('上海');
+    expect(candidateCard?.textContent).toContain('心血管内科');
+    expect(candidateCard?.textContent).toContain('名称可能与所需专科方向相关，需人工核验。');
+    expect(candidateCard?.textContent).toContain('待人工核验');
+    expect(candidateCard?.textContent).not.toContain('99');
+    expect(candidateCard?.textContent).not.toContain('不应展示的地址');
+    expect(candidateCard?.textContent).not.toContain('400-000-0000');
+    expect(candidateCard?.textContent).not.toContain('https://example.test/not-for-display');
+    expect(candidateCard?.textContent).not.toContain('收藏');
+    expect(candidateCard?.textContent).not.toContain('推荐');
+  });
+
+  it('does not render the pending-candidate section for an empty candidate list', async () => {
+    vi.mocked(aiMatchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: [],
+      score_version: 'demo-v1',
+      results: [],
+      ai: { used: true, summary: null, directions: [], fallback: false },
+      pending_candidates: [],
+    } as unknown as Awaited<ReturnType<typeof aiMatchHospitals>>);
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '持续心悸');
+    await user.click(screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' }));
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(screen.queryByRole('heading', { name: '待人工核验的候选医院' })).toBeNull();
+  });
+
+  it('hides pending candidates when verified hospital results exist', async () => {
+    vi.mocked(aiMatchHospitals).mockResolvedValue({
+      emergency: false,
+      directions: ['心血管内科'],
+      score_version: 'demo-v1',
+      results: [{
+        id: 'demo-1', name: '已核验医院', city: '上海', demo_label: '演示数据', score: 91,
+        specialties: ['心血管内科'], score_reasons: ['专科方向匹配'], source_date: '2026-07-26',
+      }],
+      ai: { used: true, summary: null, directions: ['心血管内科'], fallback: false },
+      pending_candidates: [{
+        name: '不应展示的候选医院', city: '上海', direction: '心血管内科', reason: '已有正式结果。',
+      }],
+    } as unknown as Awaited<ReturnType<typeof aiMatchHospitals>>);
+    const user = userEvent.setup();
+
+    render(<Page />);
+    await user.type(screen.getByLabelText('症状或疾病'), '持续心悸');
+    await user.click(screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' }));
+    await user.click(screen.getByRole('button', { name: '开始匹配' }));
+
+    expect(await screen.findByText('已核验医院')).not.toBeNull();
+    expect(screen.queryByRole('heading', { name: '待人工核验的候选医院' })).toBeNull();
+  });
+
   it('shows the local matching status when AI matching falls back', async () => {
     vi.mocked(aiMatchHospitals).mockResolvedValue({
       emergency: false,
@@ -93,6 +180,7 @@ describe('patient matching page', () => {
       score_version: 'demo-v1',
       results: [],
       ai: { used: false, summary: null, directions: [], fallback: true },
+      pending_candidates: [],
     });
     const user = userEvent.setup();
 

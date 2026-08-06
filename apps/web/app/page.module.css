@@ -93,3 +93,19 @@
 @media(max-width:850px) { .overview,.guide { margin-inline:24px; }.overview{grid-template-columns:repeat(2,1fr)}.overview aside{grid-column:span 2;border-top:1px solid var(--line)}.guide{grid-template-columns:1fr;gap:26px} }
 @media(max-width:560px) { .overview,.guide{margin-inline:16px}.overview{grid-template-columns:1fr}.overview>div,.overview aside{border-right:0;border-bottom:1px solid var(--line)}.overview aside{grid-column:auto}.guide ol{grid-template-columns:1fr} }
 @media(max-width:850px) { .navLinks{display:none}.heroStats{right:24px;bottom:22px} }
+.pendingCandidates { max-width:1230px; margin:30px auto 0; }
+.pendingHeader,.pendingHeader>div { display:flex; align-items:center; gap:12px; }
+.pendingHeader { padding-bottom:18px; border-bottom:1px solid var(--line); }
+.pendingHeader span { color:#21635b; font-size:12px; font-weight:900; letter-spacing:.12em; }
+.pendingHeader h2 { margin:0; font-size:22px; letter-spacing:-.04em; }
+.pendingCandidates>p { margin:14px 0; color:#5a746f; font-size:13px; line-height:1.65; }
+.pendingCards { display:grid; gap:13px; }
+.pendingCard { position:relative; border:1px solid #c7ddd6; background:#f4fbf8; padding:22px; }
+.pendingCard h3 { margin:0 0 5px; font-size:18px; }
+.pendingCard>p { margin:0 0 15px; color:#617a75; font-size:13px; }
+.pendingCard dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 20px; margin:0; }
+.pendingCard dt { color:#647b77; font-size:11px; font-weight:800; letter-spacing:.06em; }
+.pendingCard dd { margin:4px 0 0; font-size:13px; line-height:1.45; }
+.pendingCard>span { display:inline-block; margin-top:16px; border-radius:20px; background:#dff2eb; color:#21635b; padding:5px 9px; font-size:12px; font-weight:800; }
+@media(max-width:850px) { .pendingCandidates { margin-inline:24px; } }
+@media(max-width:560px) { .pendingCandidates { margin-inline:16px; }.pendingCard dl { grid-template-columns:1fr; } }
