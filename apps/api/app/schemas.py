@@ -14,3 +14,7 @@ class MatchRequest(BaseModel):
         if not value.strip():
             raise ValueError('query must not be blank')
         return value
+
+
+class AIMatchRequest(MatchRequest):
+    ai_consent: bool

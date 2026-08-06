@@ -1,0 +1,291 @@
+import json
+from datetime import date
+from urllib.error import HTTPError, URLError
+
+import pytest
+
+from app.ai_matcher import ai_match
+from app.data import DEMO_HOSPITALS
+
+AS_OF = date(2026, 8, 5)
+
+
+class FakeResponse:
+    def __init__(self, payload: dict | bytes, status: int = 200):
+        self._body = (
+            payload
+            if isinstance(payload, bytes)
+            else json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        )
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def call_ai_match(**kwargs):
+    try:
+        return ai_match(**kwargs)
+    except TypeError as exc:
+        pytest.fail(f'ai_match does not support the injectable client contract: {exc}')
+
+
+def deepseek_payload(content) -> dict:
+    return {'choices': [{'message': {'content': content}}]}
+
+
+def assert_local_fallback(response):
+    assert response.directions == ['心血管内科']
+    assert [result.id for result in response.results] == ['demo-1', 'demo-2', 'demo-3']
+    assert response.ai.model_dump() == {
+        'used': False,
+        'summary': None,
+        'directions': [],
+        'fallback': True,
+    }
+
+
+def test_successful_deepseek_json_matches_filtered_direction_with_json_mode():
+    captured = {}
+
+    def transport(request, timeout):
+        captured['url'] = request.full_url
+        captured['authorization'] = request.get_header('Authorization')
+        captured['body'] = json.loads(request.data)
+        captured['timeout'] = timeout
+        return FakeResponse({
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'summary': '建议优先匹配心血管内科。',
+                        'directions': ['心血管内科'],
+                    }, ensure_ascii=False),
+                },
+            }],
+        })
+
+    response = call_ai_match(
+        query='持续心慌',
+        city='上海',
+        priority='specialty',
+        ai_consent=True,
+        hospitals=DEMO_HOSPITALS,
+        as_of=AS_OF,
+        environ={
+            'DEEPSEEK_API_KEY': 'test-secret',
+            'DEEPSEEK_MODEL': 'configured-model',
+        },
+        transport=transport,
+    )
+
+    assert response.ai.model_dump() == {
+        'used': True,
+        'summary': '建议优先匹配心血管内科。',
+        'directions': ['心血管内科'],
+        'fallback': False,
+    }
+    assert response.directions == ['心血管内科']
+    assert [result.id for result in response.results] == ['demo-1', 'demo-2', 'demo-3']
+    assert captured == {
+        'url': 'https://api.deepseek.com/chat/completions',
+        'authorization': 'Bearer test-secret',
+        'body': {
+            'model': 'configured-model',
+            'messages': [
+                {
+                    'role': 'system',
+                    'content': (
+                        '只返回 JSON object：summary 是最多 240 字符的字符串，'
+                        'directions 是建议专科方向的字符串数组。'
+                    ),
+                },
+                {'role': 'user', 'content': '持续心慌'},
+            ],
+            'response_format': {'type': 'json_object'},
+        },
+        'timeout': 10.0,
+    }
+
+
+def test_no_consent_returns_local_match_without_calling_transport():
+    def transport(request, timeout):
+        raise AssertionError('transport must not be called without consent')
+
+    response = call_ai_match(
+        query='冠心病',
+        city='上海',
+        priority='overall',
+        ai_consent=False,
+        hospitals=DEMO_HOSPITALS,
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.directions == ['心血管内科']
+    assert response.ai.model_dump() == {
+        'used': False,
+        'summary': None,
+        'directions': [],
+        'fallback': True,
+    }
+
+
+def test_emergency_keeps_local_emergency_result_without_calling_transport():
+    def transport(request, timeout):
+        raise AssertionError('transport must not be called for an emergency')
+
+    response = call_ai_match(
+        query='突发胸痛并呼吸困难',
+        city=None,
+        priority='overall',
+        ai_consent=True,
+        hospitals=DEMO_HOSPITALS,
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.emergency is True
+    assert response.directions == []
+    assert response.results == []
+    assert response.ai.model_dump() == {
+        'used': False,
+        'summary': None,
+        'directions': [],
+        'fallback': True,
+    }
+
+
+def test_unknown_ai_directions_are_removed_before_matching():
+    def transport(request, timeout):
+        return FakeResponse({
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'summary': '保留可核验的专科方向。',
+                        'directions': ['不存在的科室', '心血管内科', '心血管内科'],
+                    }, ensure_ascii=False),
+                },
+            }],
+        })
+
+    response = call_ai_match(
+        query='持续心慌',
+        city='上海',
+        priority='overall',
+        ai_consent=True,
+        hospitals=DEMO_HOSPITALS,
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.directions == ['心血管内科']
+    assert response.ai.directions == ['心血管内科']
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        '',
+        'not json',
+        '[]',
+        json.dumps({'summary': '过长' * 121, 'directions': ['心血管内科']}, ensure_ascii=False),
+        json.dumps({'summary': '无有效方向', 'directions': []}, ensure_ascii=False),
+        json.dumps({'summary': '未知方向', 'directions': ['未知科室']}, ensure_ascii=False),
+        json.dumps({'summary': '无效方向', 'directions': [42]}, ensure_ascii=False),
+        json.dumps({'summary': 42, 'directions': ['心血管内科']}, ensure_ascii=False),
+        json.dumps(
+            {'summary': '含未允许字段', 'directions': ['心血管内科'], 'extra': True},
+            ensure_ascii=False,
+        ),
+    ],
+    ids=[
+        'empty-content',
+        'malformed-json',
+        'non-object-json',
+        'summary-too-long',
+        'empty-directions',
+        'unknown-only-directions',
+        'non-string-direction',
+        'non-string-summary',
+        'extra-field',
+    ],
+)
+def test_invalid_ai_content_returns_local_fallback(content):
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(content))
+
+    response = call_ai_match(
+        query='冠心病',
+        city='上海',
+        priority='overall',
+        ai_consent=True,
+        hospitals=DEMO_HOSPITALS,
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert_local_fallback(response)
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        TimeoutError('timed out'),
+        URLError('connection refused'),
+        HTTPError('https://api.deepseek.com/chat/completions', 500, 'server error', None, None),
+    ],
+    ids=['timeout', 'url-error', 'http-error'],
+)
+def test_transport_errors_return_local_fallback(error):
+    def transport(request, timeout):
+        raise error
+
+    response = call_ai_match(
+        query='冠心病',
+        city='上海',
+        priority='overall',
+        ai_consent=True,
+        hospitals=DEMO_HOSPITALS,
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert_local_fallback(response)
+
+
+@pytest.mark.parametrize(
+    ('payload', 'status'),
+    [
+        (b'', 200),
+        (b'not json', 200),
+        (deepseek_payload(json.dumps({'summary': '不应使用', 'directions': ['心血管内科']})), 503),
+    ],
+    ids=['empty-response', 'invalid-response-json', 'http-status-error'],
+)
+def test_invalid_http_response_returns_local_fallback(payload, status):
+    def transport(request, timeout):
+        return FakeResponse(payload, status=status)
+
+    response = call_ai_match(
+        query='冠心病',
+        city='上海',
+        priority='overall',
+        ai_consent=True,
+        hospitals=DEMO_HOSPITALS,
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert_local_fallback(response)

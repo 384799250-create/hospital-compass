@@ -56,7 +56,23 @@ def match(
     if any(term in query for term in EMERGENCY_TERMS):
         return MatchResponse(emergency=True, directions=[], score_version=SCORE_VERSION, results=[])
 
-    directions = _directions_for(query)
+    return match_directions(
+        _directions_for(query),
+        city,
+        priority,
+        hospitals=hospitals,
+        as_of=as_of,
+    )
+
+
+def match_directions(
+    directions: list[str],
+    city: str | None,
+    priority: Literal['overall', 'specialty', 'convenience'],
+    *,
+    hospitals: tuple[DemoHospital, ...] | None = None,
+    as_of: date | None = None,
+) -> MatchResponse:
     if not directions:
         return MatchResponse(emergency=False, directions=[], score_version=SCORE_VERSION, results=[])
 

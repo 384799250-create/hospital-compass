@@ -26,6 +26,28 @@ def test_blank_query_returns_invalid_request(client):
     assert response.json()['code'] == 'INVALID_REQUEST'
 
 
+def test_ai_match_without_api_key_falls_back_to_local_match(client, monkeypatch):
+    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+
+    response = client.post('/v1/ai-matches', json={
+        'query': '冠心病',
+        'city': 'Beijing',
+        'priority': 'overall',
+        'ai_consent': True,
+    })
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['directions'] == ['心血管内科']
+    assert [result['id'] for result in payload['results']] == ['beijing-pumch']
+    assert payload['ai'] == {
+        'used': False,
+        'summary': None,
+        'directions': [],
+        'fallback': True,
+    }
+
+
 def test_verified_beijing_publish_list_is_the_only_public_api_dataset(client):
     response = client.post('/v1/matches', json={
         'query': '冠心病',

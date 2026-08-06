@@ -9,11 +9,12 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.ai_matcher import ai_match
 from app.matcher import is_public_record, match
 from app.data import verified_row_to_hospital
 from app.importer import load_verified_beijing_rows
 from app.importer import validate_import
-from app.schemas import MatchRequest
+from app.schemas import AIMatchRequest, MatchRequest
 
 logger = logging.getLogger(__name__)
 app = FastAPI()
@@ -101,6 +102,18 @@ async def import_preview(request: Request, as_of: date = Depends(current_date)):
 @app.post('/v1/matches')
 async def matches(request: MatchRequest, as_of: date = Depends(current_date)):
     return match(request.query, request.city, request.priority, hospitals=PUBLIC_HOSPITALS, as_of=as_of)
+
+
+@app.post('/v1/ai-matches')
+async def ai_matches(request: AIMatchRequest, as_of: date = Depends(current_date)):
+    return ai_match(
+        request.query,
+        request.city,
+        request.priority,
+        request.ai_consent,
+        hospitals=PUBLIC_HOSPITALS,
+        as_of=as_of,
+    )
 
 
 @app.get('/v1/hospitals/{hospital_id}')
