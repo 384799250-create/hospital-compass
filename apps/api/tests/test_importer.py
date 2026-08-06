@@ -56,6 +56,17 @@ def test_load_verified_beijing_rows_rejects_empty_list(tmp_path):
         load_verified_beijing_rows(path, date(2026, 8, 6))
 
 
+def test_load_verified_beijing_rows_rejects_row_with_surplus_column(tmp_path):
+    path = tmp_path / 'publish.csv'
+    path.write_text(
+        ','.join(row()) + '\n' + ','.join(row().values()) + ',unexpected\n',
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ValueError, match='exactly the required columns'):
+        load_verified_beijing_rows(path, date(2026, 8, 6))
+
+
 @pytest.mark.parametrize(('age_days', 'raises'), [(180, False), (181, True)])
 def test_load_verified_beijing_rows_enforces_180_day_source_age(tmp_path, age_days, raises):
     path = tmp_path / 'publish.csv'

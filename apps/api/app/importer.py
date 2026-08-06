@@ -37,6 +37,8 @@ def load_verified_beijing_rows(path: Path, today: date) -> list[dict[str, str]]:
 
     if not rows:
         raise ValueError('publish list is empty')
+    if any(None in row for row in rows):
+        raise ValueError('publish list rows must contain exactly the required columns')
     if any(row.get('city') != 'Beijing' for row in rows):
         raise ValueError('publish list contains a non-Beijing row')
 
