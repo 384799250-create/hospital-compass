@@ -153,6 +153,46 @@ def test_compliant_pending_candidates_are_returned_when_no_verified_results_exis
     }]
 
 
+def test_compliant_pending_candidates_are_preserved_without_ai_directions():
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '暂无可匹配的正式结果，保留待核验候选。',
+            'directions': [],
+            'pending_candidates': [{
+                'name': '待核验医院',
+                'city': '上海',
+                'direction': '心血管内科',
+                'reason': '名称可能与所需专科方向相关，需人工核验。',
+            }],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续心悸',
+        city='上海',
+        priority='specialty',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert response.ai.model_dump() == {
+        'used': True,
+        'summary': '暂无可匹配的正式结果，保留待核验候选。',
+        'directions': [],
+        'fallback': False,
+    }
+    assert response.directions == []
+    assert response.results == []
+    assert [candidate.model_dump() for candidate in response.pending_candidates] == [{
+        'name': '待核验医院',
+        'city': '上海',
+        'direction': '心血管内科',
+        'reason': '名称可能与所需专科方向相关，需人工核验。',
+    }]
+
+
 def test_pending_candidates_are_hidden_when_verified_results_exist():
     def transport(request, timeout):
         return FakeResponse(deepseek_payload(json.dumps({

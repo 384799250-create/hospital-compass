@@ -136,15 +136,14 @@ def ai_match(
     ):
         return _fallback(local)
 
-    if not directions:
+    pending_candidates = _clean_pending_candidates(ai_payload.pending_candidates)
+    if not directions and not pending_candidates:
         return _fallback(local)
 
     matched = match_directions(directions, city, priority, hospitals=hospitals, as_of=as_of)
     return AIMatchResponse(
         **matched.model_dump(),
-        pending_candidates=(
-            [] if matched.results else _clean_pending_candidates(ai_payload.pending_candidates)
-        ),
+        pending_candidates=[] if matched.results else pending_candidates,
         ai=AIMetadata(
             used=True,
             summary=ai_payload.summary,
