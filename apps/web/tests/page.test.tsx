@@ -96,10 +96,10 @@ describe('patient matching page', () => {
       results: [],
       ai: { used: true, summary: null, directions: [], fallback: false },
       pending_candidates: [{
-        name: '待核验医院',
+        name: '头痛门诊',
         city: '上海',
-        direction: '心血管内科',
-        reason: '名称可能与所需专科方向相关，需人工核验。',
+        direction: '神经内科',
+        reason: '名称可能与头痛就医方向相关，需人工核验。',
         score: 99,
         address: '不应展示的地址',
         phone: '400-000-0000',
@@ -109,18 +109,18 @@ describe('patient matching page', () => {
     const user = userEvent.setup();
 
     render(<Page />);
-    await user.type(screen.getByLabelText('症状或疾病'), '持续心悸');
+    await user.type(screen.getByLabelText('症状或疾病'), '持续头痛');
     await user.click(screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' }));
     await user.click(screen.getByRole('button', { name: '开始匹配' }));
 
-    expect(await screen.findByRole('heading', { name: '待人工核验的候选医院' })).not.toBeNull();
-    expect(screen.getByText('这些候选由 AI 生成，仅用于流程体验；请通过医院官网或主管部门核验后再作为就医信息参考。')).not.toBeNull();
-    const candidateCard = screen.getByRole('heading', { name: '待核验医院' }).closest('article');
+    expect(await screen.findByRole('heading', { name: '待人工核验的候选医疗机构' })).not.toBeNull();
+    expect(screen.getByText('这些候选医疗机构由 AI 生成，仅用于流程体验；请通过医疗机构官网或主管部门核验后再作为就医信息参考。')).not.toBeNull();
+    const candidateCard = screen.getByRole('heading', { name: '头痛门诊' }).closest('article');
     expect(candidateCard).not.toBeNull();
     expect(candidateCard?.textContent).toContain('上海');
-    expect(candidateCard?.textContent).toContain('心血管内科');
-    expect(candidateCard?.textContent).toContain('名称可能与所需专科方向相关，需人工核验。');
-    expect(candidateCard?.textContent).toContain('待人工核验');
+    expect(candidateCard?.textContent).toContain('神经内科');
+    expect(candidateCard?.textContent).toContain('名称可能与头痛就医方向相关，需人工核验。');
+    expect(candidateCard?.textContent).toContain('待人工核验的候选医疗机构');
     expect(candidateCard?.textContent).not.toContain('99');
     expect(candidateCard?.textContent).not.toContain('不应展示的地址');
     expect(candidateCard?.textContent).not.toContain('400-000-0000');
@@ -145,7 +145,7 @@ describe('patient matching page', () => {
     await user.click(screen.getByRole('checkbox', { name: '同意将本次描述发送给 DeepSeek 进行就医方向整理' }));
     await user.click(screen.getByRole('button', { name: '开始匹配' }));
 
-    expect(screen.queryByRole('heading', { name: '待人工核验的候选医院' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '待人工核验的候选医疗机构' })).toBeNull();
   });
 
   it('hides pending candidates when verified hospital results exist', async () => {
@@ -170,7 +170,7 @@ describe('patient matching page', () => {
     await user.click(screen.getByRole('button', { name: '开始匹配' }));
 
     expect(await screen.findByText('已核验医院')).not.toBeNull();
-    expect(screen.queryByRole('heading', { name: '待人工核验的候选医院' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '待人工核验的候选医疗机构' })).toBeNull();
   });
 
   it('shows the local matching status when AI matching falls back', async () => {

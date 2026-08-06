@@ -193,8 +193,8 @@ export default function Page() {
 
       {pendingCandidates && pendingCandidates.length > 0 && (
         <section aria-labelledby="pending-candidates-title" className={styles.pendingCandidates}>
-          <header className={styles.pendingHeader}><div><span>03</span><h2 id="pending-candidates-title">待人工核验的候选医院</h2></div></header>
-          <p>这些候选由 AI 生成，仅用于流程体验；请通过医院官网或主管部门核验后再作为就医信息参考。</p>
+          <header className={styles.pendingHeader}><div><span>03</span><h2 id="pending-candidates-title">待人工核验的候选医疗机构</h2></div></header>
+          <p>这些候选医疗机构由 AI 生成，仅用于流程体验；请通过医疗机构官网或主管部门核验后再作为就医信息参考。</p>
           <div className={styles.pendingCards}>
             {pendingCandidates.map((candidate) => (
               <article className={styles.pendingCard} key={`${candidate.name}-${candidate.city}`}>
@@ -204,7 +204,7 @@ export default function Page() {
                   <div><dt>就医方向</dt><dd>{candidate.direction}</dd></div>
                   <div><dt>候选理由</dt><dd>{candidate.reason}</dd></div>
                 </dl>
-                <span>待人工核验</span>
+                <span>待人工核验的候选医疗机构</span>
               </article>
             ))}
           </div>

@@ -27,10 +27,10 @@ SYSTEM_PROMPT = (
     '只返回 JSON object：summary 是最多 240 字符的字符串，'
     'directions 是建议专科方向的字符串数组；pending_candidates 是可选数组，'
     '每项只能包含 name、city、direction、reason，且最多返回 3 项。'
-    '候选必须是中国医院的完整名称且以“医院”结尾；不确定时返回空数组；'
-    '不允许科室、门诊、诊所或中心名称。'
-    '候选仅是待人工核验的名称，不是已核验推荐；不得提供诊断或治疗建议；'
-    '不得编造地址、电话或来源链接。'
+    '候选可为医院、专科门诊、诊所或诊疗中心等中国医疗机构；'
+    '名称必须完整，不确定时返回空数组。'
+    '候选仅是待人工核验的医疗机构名称，不是已核验推荐；'
+    '不得提供诊断或治疗建议；不得捏造联系方式、地址或来源。'
 )
 
 
@@ -172,8 +172,7 @@ def _clean_pending_candidates(raw_candidates: list[object]) -> list[PendingCandi
             or _PROHIBITED_LOCATION_CUE_PATTERN.search(candidate.reason)
         )
         if (
-            not candidate.name.endswith('医院')
-            or has_prohibited_content
+            has_prohibited_content
             or has_address_content
             or _PROHIBITED_MEDICAL_ADVICE_PATTERN.search(candidate.reason)
         ):

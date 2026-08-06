@@ -105,10 +105,10 @@ def test_successful_deepseek_json_matches_filtered_direction_with_json_mode():
                         '只返回 JSON object：summary 是最多 240 字符的字符串，'
                         'directions 是建议专科方向的字符串数组；pending_candidates 是可选数组，'
                         '每项只能包含 name、city、direction、reason，且最多返回 3 项。'
-                        '候选必须是中国医院的完整名称且以“医院”结尾；不确定时返回空数组；'
-                        '不允许科室、门诊、诊所或中心名称。'
-                        '候选仅是待人工核验的名称，不是已核验推荐；不得提供诊断或治疗建议；'
-                        '不得编造地址、电话或来源链接。'
+                        '候选可为医院、专科门诊、诊所或诊疗中心等中国医疗机构；'
+                        '名称必须完整，不确定时返回空数组。'
+                        '候选仅是待人工核验的医疗机构名称，不是已核验推荐；'
+                        '不得提供诊断或治疗建议；不得捏造联系方式、地址或来源。'
                     ),
                 },
                 {'role': 'user', 'content': '持续心慌'},
@@ -191,21 +191,29 @@ def test_pending_candidate_accepts_unknown_direction_and_city_suffix():
     }]
 
 
-def test_compliant_pending_candidates_are_preserved_without_ai_directions():
+def test_compliant_medical_entity_is_preserved_and_prohibited_content_is_dropped_without_ai_directions():
     def transport(request, timeout):
         return FakeResponse(deepseek_payload(json.dumps({
             'summary': '暂无可匹配的正式结果，保留待核验候选。',
             'directions': [],
-            'pending_candidates': [{
-                'name': '待核验医院',
-                'city': '上海',
-                'direction': '心血管内科',
-                'reason': '名称可能与所需专科方向相关，需人工核验。',
-            }],
+            'pending_candidates': [
+                {
+                    'name': '头痛门诊',
+                    'city': '上海',
+                    'direction': '神经内科',
+                    'reason': '名称可能与头痛就医方向相关，需人工核验。',
+                },
+                {
+                    'name': '另一个头痛门诊',
+                    'city': '上海',
+                    'direction': '神经内科',
+                    'reason': '联系电话 123-456-7890',
+                },
+            ],
         }, ensure_ascii=False)))
 
     response = call_ai_match(
-        query='持续心悸',
+        query='持续头痛',
         city='上海',
         priority='specialty',
         ai_consent=True,
@@ -224,10 +232,10 @@ def test_compliant_pending_candidates_are_preserved_without_ai_directions():
     assert response.directions == []
     assert response.results == []
     assert [candidate.model_dump() for candidate in response.pending_candidates] == [{
-        'name': '待核验医院',
+        'name': '头痛门诊',
         'city': '上海',
-        'direction': '心血管内科',
-        'reason': '名称可能与所需专科方向相关，需人工核验。',
+        'direction': '神经内科',
+        'reason': '名称可能与头痛就医方向相关，需人工核验。',
     }]
 
 
@@ -270,7 +278,6 @@ def test_invalid_pending_candidates_are_dropped_without_failing_the_ai_match():
         'not-an-object',
         {**valid_candidate, 'address': '不得返回的地址'},
         {**valid_candidate, 'name': 42},
-        {**valid_candidate, 'name': '神经内科门诊'},
         {**valid_candidate, 'city': '   '},
         {**valid_candidate, 'direction': '   '},
         {**valid_candidate, 'direction': '科' * 41},
