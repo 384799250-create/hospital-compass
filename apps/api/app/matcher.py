@@ -8,7 +8,17 @@ from app.data import DEMO_HOSPITALS, DemoHospital
 SCORE_VERSION = 'demo-v1'
 SOURCE_MAX_AGE_DAYS = 180
 EMERGENCY_TERMS = ('突发胸痛', '呼吸困难', '意识障碍', '大出血')
-SPECIALTY_KEYWORDS = {'冠心病': '心血管内科', '胸痛': '心血管内科'}
+SPECIALTY_KEYWORDS = {
+    '冠心病': '心血管内科',
+    '胸痛': '心血管内科',
+    '眼睛疼': '眼科',
+    '视物模糊': '眼科',
+    '红眼': '眼科',
+    '鼻塞': '耳鼻咽喉头颈外科',
+    '耳痛': '耳鼻咽喉头颈外科',
+    '听力下降': '耳鼻咽喉头颈外科',
+    '咽痛': '耳鼻咽喉头颈外科',
+}
 WEIGHTS = {
     'overall': (45, 25, 20, 10),
     'specialty': (60, 20, 10, 10),

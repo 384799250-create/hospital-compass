@@ -62,6 +62,26 @@ def test_load_verified_beijing_rows_rejects_invalid_publish_tokens(tmp_path, fie
         load_verified_beijing_rows(path, date(2026, 8, 6))
 
 
+@pytest.mark.parametrize(
+    ('specialty', 'disease_tag'),
+    [
+        ('眼科', '眼睛疼'),
+        ('眼科', '视物模糊'),
+        ('眼科', '红眼'),
+        ('耳鼻咽喉头颈外科', '鼻塞'),
+        ('耳鼻咽喉头颈外科', '耳痛'),
+        ('耳鼻咽喉头颈外科', '听力下降'),
+        ('耳鼻咽喉头颈外科', '咽痛'),
+    ],
+)
+def test_load_verified_beijing_rows_accepts_tongren_direction_tokens(tmp_path, specialty, disease_tag):
+    path = tmp_path / 'publish.csv'
+    expected = row(specialties=specialty, disease_tags=disease_tag)
+    write_rows(path, [expected])
+
+    assert load_verified_beijing_rows(path, date(2026, 8, 6)) == [expected]
+
+
 def test_load_verified_beijing_rows_rejects_empty_list(tmp_path):
     path = tmp_path / 'publish.csv'
     write_rows(path, [])

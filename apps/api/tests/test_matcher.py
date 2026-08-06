@@ -30,6 +30,24 @@ def test_unknown_query_returns_no_directions_and_no_results():
     assert response.results == []
 
 
+@pytest.mark.parametrize(
+    ('query', 'direction'),
+    [
+        ('眼睛疼', '眼科'),
+        ('视物模糊', '眼科'),
+        ('红眼', '眼科'),
+        ('鼻塞', '耳鼻咽喉头颈外科'),
+        ('耳痛', '耳鼻咽喉头颈外科'),
+        ('听力下降', '耳鼻咽喉头颈外科'),
+        ('咽痛', '耳鼻咽喉头颈外科'),
+    ],
+)
+def test_tongren_symptoms_map_to_their_clinical_direction(query, direction):
+    response = match(query, '北京', 'overall', as_of=AS_OF)
+
+    assert response.directions == [direction]
+
+
 def test_recognized_direction_excludes_hospitals_without_that_specialty(monkeypatch):
     unrelated = replace(
         DEMO_HOSPITALS[0],
