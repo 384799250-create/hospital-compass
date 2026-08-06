@@ -21,6 +21,7 @@ _PROHIBITED_PENDING_CANDIDATE_PATTERNS = (
 _PROHIBITED_LOCATION_CUE_PATTERN = re.compile(r'[省市区县路街号]')
 _PROHIBITED_NAME_ADDRESS_PATTERN = re.compile(r'[路街号]')
 _DETAILED_CITY_ADDRESS_PATTERN = re.compile(r'[路街号]|[省市].*(?:区|县)')
+_SUB_CITY_PATTERN = re.compile(r'(?:区|县)$')
 _PROHIBITED_MEDICAL_ADVICE_PATTERN = re.compile(r'诊断|治疗|用药|服用|手术|处方')
 SYSTEM_PROMPT = (
     '只返回 JSON object：summary 是最多 240 字符的字符串，'
@@ -166,6 +167,7 @@ def _clean_pending_candidates(raw_candidates: list[object]) -> list[PendingCandi
         has_address_content = (
             _PROHIBITED_NAME_ADDRESS_PATTERN.search(candidate.name)
             or _DETAILED_CITY_ADDRESS_PATTERN.search(candidate.city)
+            or _SUB_CITY_PATTERN.search(candidate.city)
             or _PROHIBITED_LOCATION_CUE_PATTERN.search(candidate.direction)
             or _PROHIBITED_LOCATION_CUE_PATTERN.search(candidate.reason)
         )

@@ -444,6 +444,43 @@ def test_pending_candidate_is_dropped_when_city_contains_detailed_address(detail
     assert response.ai.fallback is True
 
 
+def test_pending_candidates_require_city_level_city_values():
+    def candidate(city):
+        return {
+            'name': '待核验医院',
+            'city': city,
+            'direction': '神经内科',
+            'reason': '名称可能与所需专科方向相关，需人工核验。',
+        }
+
+    def transport(request, timeout):
+        return FakeResponse(deepseek_payload(json.dumps({
+            'summary': '暂无已核验匹配。',
+            'directions': [],
+            'pending_candidates': [
+                *(candidate(city) for city in ('朝阳区', '海淀区', '浦东新区')),
+                *(candidate(city) for city in ('北京市', 'Beijing', 'Shanghai', 'Guangzhou')),
+            ],
+        }, ensure_ascii=False)))
+
+    response = call_ai_match(
+        query='持续头痛',
+        city='北京市',
+        priority='overall',
+        ai_consent=True,
+        hospitals=(),
+        as_of=AS_OF,
+        environ={'DEEPSEEK_API_KEY': 'test-secret'},
+        transport=transport,
+    )
+
+    assert [candidate.city for candidate in response.pending_candidates] == [
+        '北京市',
+        'Beijing',
+        'Shanghai',
+    ]
+
+
 def test_pending_candidates_are_trimmed_and_limited_to_three_valid_items():
     def transport(request, timeout):
         return FakeResponse(deepseek_payload(json.dumps({
