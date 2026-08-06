@@ -763,7 +763,7 @@ def test_invalid_ai_content_returns_local_fallback(content):
     ],
     ids=['timeout', 'url-error', 'http-error'],
 )
-def test_transport_errors_return_local_fallback(error):
+def test_transport_errors_return_local_fallback(error, caplog):
     def transport(request, timeout):
         raise error
 
@@ -779,6 +779,8 @@ def test_transport_errors_return_local_fallback(error):
     )
 
     assert_local_fallback(response)
+    if isinstance(error, HTTPError):
+        assert 'deepseek_request_failed status=500' in caplog.text
 
 
 @pytest.mark.parametrize(

@@ -1,9 +1,10 @@
 import json
+import logging
 import os
 import re
 from datetime import date
 from typing import Callable, Literal, Mapping
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator
@@ -12,6 +13,7 @@ from app.data import DemoHospital
 from app.matcher import SPECIALTY_KEYWORDS, MatchResponse, match, match_directions
 
 DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
+logger = logging.getLogger(__name__)
 _PROHIBITED_PENDING_CANDIDATE_PATTERNS = (
     re.compile(r'https?://|www\.', re.IGNORECASE),
     re.compile(r'(?<!\d)\d(?:[\s-]*\d){6,}(?!\d)'),
@@ -124,6 +126,9 @@ def ai_match(
                 if direction in allowed_directions
             )
         )
+    except HTTPError as exc:
+        logger.warning('deepseek_request_failed status=%s', exc.code)
+        return _fallback(local)
     except (
         AttributeError,
         IndexError,
@@ -134,7 +139,8 @@ def ai_match(
         URLError,
         ValidationError,
         json.JSONDecodeError,
-    ):
+    ) as exc:
+        logger.warning('deepseek_request_failed type=%s', type(exc).__name__)
         return _fallback(local)
 
     pending_candidates = _clean_pending_candidates(ai_payload.pending_candidates)
