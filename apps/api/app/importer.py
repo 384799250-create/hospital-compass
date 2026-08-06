@@ -34,18 +34,25 @@ def validate_import(rows: list[dict[str, str]], today: date) -> ImportReport:
             invalid_fields.append('city')
         if row.get('tier') not in VALID_TIERS:
             invalid_fields.append('tier')
-        source_url = urlparse(row.get('source_url', ''))
-        if source_url.scheme != 'https' or not source_url.netloc:
+        source_url_value = row.get('source_url', '')
+        try:
+            source_url = urlparse(source_url_value) if isinstance(source_url_value, str) else None
+            has_https_hostname = source_url is not None and source_url.scheme == 'https' and bool(source_url.hostname)
+        except ValueError:
+            has_https_hostname = False
+        if not has_https_hostname:
             invalid_fields.append('source_url')
         try:
-            source_date = date.fromisoformat(row.get('source_date', ''))
-        except ValueError:
+            source_date_value = row.get('source_date', '')
+            source_date = date.fromisoformat(source_date_value) if isinstance(source_date_value, str) else None
+        except (TypeError, ValueError):
             invalid_fields.append('source_date')
         else:
-            if source_date > today or today - source_date > MAX_SOURCE_AGE:
+            if source_date is None or source_date > today or today - source_date > MAX_SOURCE_AGE:
                 invalid_fields.append('source_date')
         for field in ('specialties', 'disease_tags'):
-            if not row.get(field, '').strip():
+            value = row.get(field, '')
+            if not isinstance(value, str) or not value.strip():
                 invalid_fields.append(field)
         for field in ('verified', 'published'):
             if row.get(field) != 'true':

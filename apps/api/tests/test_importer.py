@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.data import PILOT_DRAFT_CSV_PATH
 from app.importer import validate_import
+import pytest
 
 
 def row(**overrides: str) -> dict[str, str]:
@@ -36,6 +37,22 @@ def test_rejects_https_url_without_a_host():
 
     assert report.accepted == []
     assert report.errors[0].fields == ('source_url',)
+
+
+@pytest.mark.parametrize('source_url', ['https://user@', 'https://:443'])
+def test_rejects_https_urls_without_a_hostname(source_url):
+    report = validate_import([row(source_url=source_url)], date(2026, 8, 6))
+
+    assert report.accepted == []
+    assert report.errors[0].fields == ('source_url',)
+
+
+@pytest.mark.parametrize('field', ['source_date', 'specialties', 'disease_tags'])
+def test_none_required_source_or_tag_fields_return_row_errors(field):
+    report = validate_import([row(**{field: None})], date(2026, 8, 6))
+
+    assert report.accepted == []
+    assert field in report.errors[0].fields
 
 
 def test_reports_every_required_field_error_without_accepting_invalid_rows():

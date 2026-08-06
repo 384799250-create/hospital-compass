@@ -49,3 +49,15 @@ python -m pytest -v
 ## Concerns
 
 No blocking concerns. Valid tiers are explicitly limited to `primary`, `secondary`, and `tertiary`; future source conventions would need to map to one of those values before import.
+
+## Review remediation
+
+Follow-up review found that `urlparse(...).netloc` could accept an HTTPS URL
+without a hostname, and that `None` values could throw while validating dates
+or tag fields. Focused red tests demonstrated five failures: `https://user@`,
+`https://:443`, and `None` for each of `source_date`, `specialties`, and
+`disease_tags`.
+
+The importer now requires a parsed HTTPS hostname, validates field types before
+normalization, and catches malformed source-date input as a row-level error.
+The final API verification was `python -m pytest -v` with **36 passed**.
