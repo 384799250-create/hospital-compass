@@ -1,18 +1,38 @@
+import asyncio
+import json
+import logging
 from datetime import date
+from functools import partial
 
 from fastapi.testclient import TestClient
 import pytest
 
-from app.main import app, current_date
+import app.main as main
+from app.ai_matcher import ai_match
+
+
+class FakeAIResponse:
+    def __init__(self, payload: dict):
+        self._body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        self.status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return self._body
 
 
 @pytest.fixture
 def client():
-    app.dependency_overrides[current_date] = lambda: date(2026, 8, 6)
+    main.app.dependency_overrides[main.current_date] = lambda: date(2026, 8, 6)
     try:
-        yield TestClient(app)
+        yield TestClient(main.app)
     finally:
-        app.dependency_overrides.clear()
+        main.app.dependency_overrides.clear()
 
 
 def test_health_returns_ok(client):
@@ -45,6 +65,106 @@ def test_ai_match_without_api_key_falls_back_to_local_match(client, monkeypatch)
         'summary': None,
         'directions': [],
         'fallback': True,
+    }
+
+
+@pytest.mark.parametrize('coerced_consent', ['true', 'false', '1', '0', 1, 0, 1.0, 0.0])
+def test_ai_match_rejects_non_boolean_consent(client, monkeypatch, coerced_consent):
+    def unexpected_transport(request, timeout):
+        pytest.fail('non-boolean consent reached the external AI transport')
+
+    monkeypatch.setattr(
+        main,
+        'ai_match',
+        partial(
+            ai_match,
+            environ={'DEEPSEEK_API_KEY': 'must-not-be-sent'},
+            transport=unexpected_transport,
+        ),
+    )
+
+    response = client.post('/v1/ai-matches', json={
+        'query': '眼睛疼',
+        'city': 'Beijing',
+        'priority': 'overall',
+        'ai_consent': coerced_consent,
+    })
+
+    assert response.status_code == 400
+    assert response.json() == {'code': 'INVALID_REQUEST'}
+
+
+def test_ai_match_success_runs_transport_off_event_loop_and_keeps_secrets_out_of_logs(
+    client,
+    monkeypatch,
+    caplog,
+):
+    symptom_query = 'private symptom token'
+    api_key = 'private-deepseek-key'
+
+    def transport(request, timeout):
+        with pytest.raises(RuntimeError, match='no running event loop'):
+            asyncio.get_running_loop()
+        return FakeAIResponse({
+            'choices': [{
+                'message': {
+                    'content': json.dumps({
+                        'summary': '建议眼科评估',
+                        'directions': ['眼科'],
+                    }, ensure_ascii=False),
+                },
+            }],
+        })
+
+    monkeypatch.setattr(
+        main,
+        'ai_match',
+        partial(ai_match, environ={'DEEPSEEK_API_KEY': api_key}, transport=transport),
+    )
+
+    with caplog.at_level(logging.INFO, logger='app.main'):
+        response = client.post('/v1/ai-matches', json={
+            'query': symptom_query,
+            'city': 'Beijing',
+            'priority': 'overall',
+            'ai_consent': True,
+        })
+
+    assert response.status_code == 200
+    assert response.json()['ai'] == {
+        'used': True,
+        'summary': '建议眼科评估',
+        'directions': ['眼科'],
+        'fallback': False,
+    }
+    assert [result['id'] for result in response.json()['results']] == ['beijing-tongren']
+    assert symptom_query not in caplog.text
+    assert api_key not in caplog.text
+
+
+def test_ai_match_openapi_declares_ai_metadata_response(client):
+    openapi = client.get('/openapi.json').json()
+
+    response_schema = openapi['paths']['/v1/ai-matches']['post']['responses']['200'][
+        'content'
+    ]['application/json']['schema']
+    assert response_schema == {'$ref': '#/components/schemas/AIMatchResponse'}
+
+    schemas = openapi['components']['schemas']
+    assert schemas['AIMatchResponse']['properties']['ai'] == {
+        '$ref': '#/components/schemas/AIMetadata',
+    }
+    assert set(schemas['AIMetadata']['properties']) == {
+        'used',
+        'summary',
+        'directions',
+        'fallback',
+    }
+    assert set(schemas['AIMetadata']['required']) == {
+        'used',
+        'summary',
+        'directions',
+        'fallback',
     }
 
 

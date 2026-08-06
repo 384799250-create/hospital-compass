@@ -8,8 +8,9 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
-from app.ai_matcher import ai_match
+from app.ai_matcher import AIMatchResponse, ai_match
 from app.matcher import is_public_record, match
 from app.data import verified_row_to_hospital
 from app.importer import load_verified_beijing_rows
@@ -104,9 +105,10 @@ async def matches(request: MatchRequest, as_of: date = Depends(current_date)):
     return match(request.query, request.city, request.priority, hospitals=PUBLIC_HOSPITALS, as_of=as_of)
 
 
-@app.post('/v1/ai-matches')
+@app.post('/v1/ai-matches', response_model=AIMatchResponse)
 async def ai_matches(request: AIMatchRequest, as_of: date = Depends(current_date)):
-    return ai_match(
+    return await run_in_threadpool(
+        ai_match,
         request.query,
         request.city,
         request.priority,

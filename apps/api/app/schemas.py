@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator
 
 
 class MatchRequest(BaseModel):
@@ -17,4 +17,4 @@ class MatchRequest(BaseModel):
 
 
 class AIMatchRequest(MatchRequest):
-    ai_consent: bool
+    ai_consent: StrictBool
