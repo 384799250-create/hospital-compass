@@ -121,3 +121,19 @@ def test_candidate_extracts_hospital_entity_from_department_page_title():
 
     assert candidate is not None
     assert candidate.name == '中山大学附属第三医院'
+
+
+def test_candidate_rejects_known_english_hospital_from_other_city():
+    document = SearchDocument(
+        title="Cardiology Dept.-Shenzhen Luohu People's Hospital",
+        url='https://www.szlh.gov.cn/hospital/cardiology',
+        snippet='Shenzhen hospital cardiology department',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '广州市', 'district': '南山区'},
+    )
+
+    assert candidate is None

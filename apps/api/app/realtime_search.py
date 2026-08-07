@@ -20,6 +20,21 @@ _LOCATION_ALIASES = {
     '杭州市': ('杭州市', '杭州', 'Hangzhou'), '成都市': ('成都市', '成都', 'Chengdu'),
     '武汉市': ('武汉市', '武汉', 'Wuhan'), '南京市': ('南京市', '南京', 'Nanjing'),
 }
+_ENGLISH_HOSPITAL_NAMES = {
+    'guang anmen hospital': '广安门医院',
+    "guang'anmen hospital": '广安门医院',
+    'chinese pla general hospital': '中国人民解放军总医院',
+    'sun yat-sen memorial hospital': '中山大学孙逸仙纪念医院',
+    'xiangya hospital central south university': '中南大学湘雅医院',
+    "shenzhen luohu people's hospital": '深圳市罗湖区人民医院',
+    'shenzhen luohu people\'s hospital': '深圳市罗湖区人民医院',
+    'union hospital': '华中科技大学同济医学院附属协和医院',
+}
+_ENGLISH_CITY_NAMES = {
+    'Guangzhou': '广州市', 'Shenzhen': '深圳市', 'Beijing': '北京市',
+    'Shanghai': '上海市', 'Hangzhou': '杭州市', 'Wuhan': '武汉市',
+    'Nanjing': '南京市', 'Chengdu': '成都市',
+}
 
 _AUTHORIZED_REGISTRATION_HOSTS = frozenset({
     '114yygh.com',
@@ -102,6 +117,10 @@ def _normalize(value: str) -> str:
 
 def _hospital_name_from_title(title: str) -> str:
     """Prefer the hospital entity in a page title over its department/topic prefix."""
+    lowered = title.casefold()
+    for english_name, chinese_name in sorted(_ENGLISH_HOSPITAL_NAMES.items(), key=lambda item: -len(item[0])):
+        if english_name in lowered:
+            return chinese_name
     chinese_entities = re.findall(r'[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9·（）()\-]{1,79}医院', title)
     if chinese_entities:
         return chinese_entities[-1].strip()
@@ -269,6 +288,10 @@ def candidate_from_document(
         location_tokens.extend(_LOCATION_ALIASES.get(part, (part,)))
     has_location_evidence = any(token.casefold() in searchable_text.casefold() for token in location_tokens)
     has_hospital_entity = any(term in searchable_text.casefold() for term in ('hospital', 'medical center', 'medical centre', '医院', '医科大学'))
+    requested_city = requested[1]
+    for english_city, chinese_city in _ENGLISH_CITY_NAMES.items():
+        if english_city.casefold() in searchable_text.casefold() and chinese_city != requested_city and not explicit_location:
+            return None
     if not explicit_location and not has_hospital_entity:
         return None
     city = str(metadata.get('city') or requested[1]).strip()
