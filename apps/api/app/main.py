@@ -15,7 +15,9 @@ from app.matcher import is_public_record, match
 from app.data import verified_row_to_hospital
 from app.importer import load_verified_beijing_rows
 from app.importer import validate_import
-from app.schemas import AIMatchRequest, MatchRequest
+from app.schemas import AIMatchRequest, MatchRequest, RealtimeSearchRequest
+from app.bocha_search import BochaSearchClient
+from app.realtime_search import candidate_from_document, merge_hospital_candidates, rank_candidates
 
 logger = logging.getLogger(__name__)
 app = FastAPI()
@@ -116,6 +118,84 @@ async def ai_matches(request: AIMatchRequest, as_of: date = Depends(current_date
         hospitals=PUBLIC_HOSPITALS,
         as_of=as_of,
     )
+
+
+@app.post('/v1/realtime-hospital-search')
+async def realtime_hospital_search(request: RealtimeSearchRequest):
+    """Search public web sources and return up to ten explainable results."""
+    # Run the deterministic emergency classifier before any external call.
+    local = match(request.query, request.location.city, 'overall')
+    if local.emergency:
+        return {
+            'status': 'EMERGENCY',
+            'directions': [],
+            'scope': request.scope,
+            'results': [],
+            'sources': [],
+            'fetched_at': None,
+        }
+
+    directions = list(local.directions)
+    # ai_match owns the DeepSeek consent/key gate. It is never invoked for an
+    # unconsented request, which keeps symptom text out of the AI transport.
+    if request.ai_consent:
+        ai_response = await run_in_threadpool(
+            ai_match,
+            request.query,
+            request.location.city,
+            'overall',
+            True,
+            hospitals=PUBLIC_HOSPITALS,
+        )
+        directions = list(dict.fromkeys(ai_response.directions or directions))
+
+    search_client = BochaSearchClient()
+    search_result = await run_in_threadpool(
+        search_client.search,
+        ' '.join(part for part in (request.query, *directions, request.location.city) if part),
+        10,
+    )
+    if not search_result.available:
+        return {
+            'status': 'SEARCH_UNAVAILABLE',
+            'directions': directions,
+            'scope': request.scope,
+            'results': [],
+            'sources': [],
+            'fetched_at': None,
+        }
+
+    candidates = [
+        candidate
+        for document in search_result.documents
+        if (candidate := candidate_from_document(document, location=request.location)) is not None
+    ]
+    candidates = merge_hospital_candidates(candidates)
+    results = rank_candidates(
+        candidates,
+        directions=directions,
+        location=request.location,
+        scope=request.scope,
+    )
+    if not results:
+        return {
+            'status': 'NO_RESULTS',
+            'directions': directions,
+            'scope': request.scope,
+            'results': [],
+            'sources': [],
+            'fetched_at': None,
+        }
+    sources = list(dict.fromkeys(url for result in results for url in result['source_urls']))
+    fetched_at = max(result['fetched_at'] for result in results)
+    return {
+        'status': 'OK',
+        'directions': directions,
+        'scope': request.scope,
+        'results': results[:10],
+        'sources': sources,
+        'fetched_at': fetched_at,
+    }
 
 
 @app.get('/v1/hospitals/{hospital_id}')

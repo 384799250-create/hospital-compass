@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import date
+from datetime import UTC, date, datetime
 from functools import partial
 
 from fastapi.testclient import TestClient
@@ -9,7 +9,9 @@ import pytest
 
 import app.main as main
 from app.ai_matcher import ai_match
+from app.bocha_search import SearchDocument, SearchResult
 from app.matcher import SPECIALTY_KEYWORDS
+from app.realtime_search import HospitalCandidate
 
 
 class FakeAIResponse:
@@ -38,6 +40,70 @@ def client():
 
 def test_health_returns_ok(client):
     assert client.get('/health').json() == {'status': 'ok'}
+
+
+def _realtime_payload(**overrides):
+    return {
+        'query': 'cardiology',
+        'location': {'province': 'Guangdong', 'city': 'Shenzhen', 'district': 'Nanshan'},
+        'ai_consent': False,
+        **overrides,
+    }
+
+
+def test_realtime_emergency_does_not_call_bocha_or_ai(client, monkeypatch):
+    monkeypatch.setattr(main, 'BochaSearchClient', lambda: pytest.fail('Bocha must not run'))
+    monkeypatch.setattr(main, 'ai_match', lambda *args, **kwargs: pytest.fail('AI must not run'))
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload(query='突发胸痛'))
+    assert response.status_code == 200
+    assert response.json()['status'] == 'EMERGENCY'
+    assert response.json()['results'] == []
+
+
+def test_realtime_without_consent_skips_ai_and_reports_unavailable(client, monkeypatch):
+    monkeypatch.setattr(main, 'ai_match', lambda *args, **kwargs: pytest.fail('AI must not run'))
+    monkeypatch.setattr(main, 'BochaSearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(False, []),
+    })())
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+    assert response.status_code == 200
+    assert response.json()['status'] == 'SEARCH_UNAVAILABLE'
+
+
+def test_realtime_filters_scope_caps_ten_and_orders_by_weight(client, monkeypatch):
+    fetched_at = datetime(2026, 8, 6, tzinfo=UTC)
+    documents = [
+        SearchDocument(title=f'Hospital {index}', url=f'https://example.org/{index}',
+                       snippet='public 三甲 cardiology', fetched_at=fetched_at)
+        for index in range(11)
+    ]
+    documents.append(SearchDocument(title='Outside City', url='https://example.org/outside',
+                                    snippet='public 三甲 cardiology', fetched_at=fetched_at))
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location: HospitalCandidate(
+        name=document.title,
+        city='Guangzhou' if document.title == 'Outside City' else 'Shenzhen',
+        province='Guangdong', district='Nanshan', sources=[document],
+        specialties=('cardiology',),
+    ))
+    monkeypatch.setattr(main, 'BochaSearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, documents),
+    })())
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['status'] == 'OK'
+    assert len(payload['results']) == 10
+    assert all(result['city'] == 'Shenzhen' for result in payload['results'])
+    assert payload['results'][0]['score'] >= payload['results'][-1]['score']
+
+
+def test_realtime_search_with_no_documents_reports_no_results(client, monkeypatch):
+    monkeypatch.setattr(main, 'BochaSearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, []),
+    })())
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+    assert response.status_code == 200
+    assert response.json()['status'] == 'NO_RESULTS'
 
 
 def test_blank_query_returns_invalid_request(client):
