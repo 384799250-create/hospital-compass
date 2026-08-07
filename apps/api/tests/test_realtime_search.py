@@ -2,7 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas import RealtimeSearchRequest
-from app.realtime_search import parse_location, scope_matches
+from app.bocha_search import SearchDocument
+from app.realtime_search import candidate_from_document, parse_location, scope_matches
 
 
 def request(**overrides):
@@ -71,3 +72,52 @@ def test_scope_matches_enforces_exact_scope_boundary(scope, candidate, expected)
     })
 
     assert scope_matches(candidate, request_location, scope) is expected
+
+
+def test_candidate_accepts_english_city_evidence_from_scoped_search():
+    document = SearchDocument(
+        title='Cardiology - Sun Yat-Sen Memorial Hospital',
+        url='https://www.gzsys.org.cn/cardiology',
+        snippet='Guangzhou hospital cardiology department',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '广州市', 'district': '南山区'},
+    )
+
+    assert candidate is not None
+
+
+def test_candidate_rejects_non_hospital_english_search_page():
+    document = SearchDocument(
+        title='Cardiology research report in Guangzhou',
+        url='https://example.org/report',
+        snippet='A research paper about cardiovascular disease.',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '广州市', 'district': '南山区'},
+    )
+
+    assert candidate is None
+
+
+def test_candidate_extracts_hospital_entity_from_department_page_title():
+    document = SearchDocument(
+        title='Cardiology - 中山大学附属第三医院',
+        url='https://www.zssy.com.cn/cardiology',
+        snippet='Guangzhou hospital cardiology department',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '广州市', 'district': '南山区'},
+    )
+
+    assert candidate is not None
+    assert candidate.name == '中山大学附属第三医院'

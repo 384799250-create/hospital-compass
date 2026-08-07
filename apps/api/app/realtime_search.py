@@ -13,6 +13,14 @@ from app.bocha_search import SearchDocument
 LocationParts = tuple[str, str, str]
 Scope = Literal['district', 'city', 'province', 'national']
 
+_LOCATION_ALIASES = {
+    '广州市': ('广州市', '广州', 'Guangzhou'), '广东省': ('广东省', '广东', 'Guangdong'),
+    '深圳市': ('深圳市', '深圳', 'Shenzhen'), '北京市': ('北京市', '北京', 'Beijing'),
+    '上海市': ('上海市', '上海', 'Shanghai'), '浙江省': ('浙江省', '浙江', 'Zhejiang'),
+    '杭州市': ('杭州市', '杭州', 'Hangzhou'), '成都市': ('成都市', '成都', 'Chengdu'),
+    '武汉市': ('武汉市', '武汉', 'Wuhan'), '南京市': ('南京市', '南京', 'Nanjing'),
+}
+
 _AUTHORIZED_REGISTRATION_HOSTS = frozenset({
     '114yygh.com',
     'www.114yygh.com',
@@ -90,6 +98,17 @@ def _newest_source(candidate: HospitalCandidate) -> datetime:
 
 def _normalize(value: str) -> str:
     return ''.join(value.casefold().split())
+
+
+def _hospital_name_from_title(title: str) -> str:
+    """Prefer the hospital entity in a page title over its department/topic prefix."""
+    chinese_entities = re.findall(r'[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9·（）()\-]{1,79}医院', title)
+    if chinese_entities:
+        return chinese_entities[-1].strip()
+    english_entities = re.findall(r"[A-Za-z][A-Za-z0-9'&.\- ]{1,79}\bHospital(?:\s*\([^)]*\))?", title)
+    if english_entities:
+        return english_entities[-1].strip(' _-')
+    return title.split(' - ')[0].split('|')[0].strip()
 
 
 def parse_location(location: Location | Mapping[str, str]) -> LocationParts:
@@ -245,7 +264,12 @@ def candidate_from_document(
     metadata = document if isinstance(document, Mapping) else document.__dict__
     explicit_location = any(metadata.get(key) for key in ('city', 'province', 'district'))
     searchable_text = f'{title} {snippet} {url}'
-    if not explicit_location and not all(token in searchable_text for token in requested):
+    location_tokens = []
+    for part in requested[:2]:
+        location_tokens.extend(_LOCATION_ALIASES.get(part, (part,)))
+    has_location_evidence = any(token.casefold() in searchable_text.casefold() for token in location_tokens)
+    has_hospital_entity = any(term in searchable_text.casefold() for term in ('hospital', 'medical center', 'medical centre', '医院', '医科大学'))
+    if not explicit_location and not has_hospital_entity:
         return None
     city = str(metadata.get('city') or requested[1]).strip()
     province = str(metadata.get('province') or requested[0]).strip()
@@ -254,7 +278,7 @@ def candidate_from_document(
     if isinstance(specialties, str):
         specialties = (specialties,)
     return HospitalCandidate(
-        name=title.split(' - ')[0].split('|')[0].strip(),
+        name=_hospital_name_from_title(title),
         city=city,
         province=province,
         district=district,

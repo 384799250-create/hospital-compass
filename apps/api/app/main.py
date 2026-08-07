@@ -35,6 +35,38 @@ PUBLIC_HOSPITALS = tuple(
 REALTIME_DETAIL_SESSIONS: dict[str, tuple[datetime, dict[str, object]]] = {}
 REALTIME_DETAIL_TTL = timedelta(minutes=15)
 
+_SEARCH_CITY_NAMES = {
+    '广州': 'Guangzhou', '广州市': 'Guangzhou', '深圳': 'Shenzhen', '深圳市': 'Shenzhen',
+    '北京': 'Beijing', '北京市': 'Beijing', '上海': 'Shanghai', '上海市': 'Shanghai',
+    '杭州': 'Hangzhou', '杭州市': 'Hangzhou', '成都': 'Chengdu', '成都市': 'Chengdu',
+    '武汉': 'Wuhan', '武汉市': 'Wuhan', '南京': 'Nanjing', '南京市': 'Nanjing',
+    '天津': 'Tianjin', '天津市': 'Tianjin', '重庆': 'Chongqing', '重庆市': 'Chongqing',
+}
+_SEARCH_DIRECTION_NAMES = {
+    '心血管内科': 'cardiology', '呼吸内科': 'respiratory medicine', '神经内科': 'neurology',
+    '肿瘤科': 'oncology', '骨科': 'orthopedics', '妇产科': 'obstetrics gynecology',
+    '儿科': 'pediatrics', '眼科': 'ophthalmology', '耳鼻咽喉头颈外科': 'otolaryngology',
+    '消化内科': 'gastroenterology', '内分泌科': 'endocrinology', '皮肤科': 'dermatology',
+}
+_SEARCH_SYMPTOM_NAMES = {
+    '心绞痛': 'angina heart disease cardiology', '冠心病': 'coronary heart disease cardiology',
+    '胸痛': 'chest pain cardiology', '心肌梗死': 'myocardial infarction cardiology',
+    '心肌缺血': 'ischemic heart disease cardiology', '发热': 'fever infectious disease',
+    '咳嗽': 'cough respiratory medicine', '关节疼痛': 'joint pain orthopedics',
+}
+
+
+def _bocha_query_terms(request: RealtimeSearchRequest, directions: list[str]) -> tuple[str, ...]:
+    city = _SEARCH_CITY_NAMES.get(request.location.city, '')
+    direction_terms = [_SEARCH_DIRECTION_NAMES.get(direction, '') for direction in directions]
+    direction_terms = [term for term in direction_terms if term]
+    symptom_term = ' '.join(direction_terms) or next(
+        (value for key, value in _SEARCH_SYMPTOM_NAMES.items() if key in request.query),
+        'medical specialty',
+    )
+    place_term = city or 'China'
+    return place_term, symptom_term
+
 
 def current_date() -> date:
     """Clock boundary for source-freshness checks."""
@@ -153,11 +185,12 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         directions = list(dict.fromkeys(ai_response.directions or directions))
 
     search_client = BochaSearchClient()
+    place_term, specialty_term = _bocha_query_terms(request, directions)
     search_queries = [
-        ' '.join(part for part in (request.query, *directions, request.location.province, request.location.city, request.location.district, '医院 官网') if part),
-        ' '.join(part for part in (request.query, *directions, request.location.province, request.location.city, '三甲医院 科室') if part),
-        ' '.join(part for part in (request.query, *directions, request.location.province, '医院 专科') if part),
-        ' '.join(part for part in (request.query, *directions, '全国医院 官方网站') if part),
+        f'{place_term} {specialty_term} hospital official website',
+        f'{place_term} {specialty_term} top hospital',
+        f'{place_term} hospital {specialty_term} department',
+        f'China {specialty_term} hospital official website',
     ]
     search_results = [
         await run_in_threadpool(search_client.search, query, 10)
