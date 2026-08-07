@@ -148,6 +148,7 @@ label[for="city"], .city { display: none; }
 .match .form button { grid-column:3; grid-row:1; }
 .match .form .aiConsent { grid-column:1 / -1; grid-row:3; }
 .formGrid input,.formGrid select { min-height:44px; border:1px solid #bfd3cd; border-radius:4px; padding:10px 11px; background:#fff; color:var(--ink); font:inherit; }
+.formGrid select:disabled { background:#f1f5f4; color:#8aa09b; cursor:not-allowed; }
 .overview { max-width:1280px; margin:26px auto 0; background:#fff; border-color:#d5e3df; }
 .overview>div,.overview aside { min-height:112px; padding:22px 26px; }
 .guide { max-width:1280px; margin-top:34px; padding:30px 0; }

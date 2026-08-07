@@ -8,6 +8,14 @@ import styles from './page.module.css';
 
 const FALLBACK_COPY = '匹配服务暂时不可用。请查询当地卫生健康部门地址与医院官方站点；如情况紧急，请立即急诊或拨打 120。';
 
+const LOCATION_TREE: Record<string, Record<string, string[]>> = {
+  '广东省': { '广州市': ['越秀区', '天河区', '海珠区', '番禺区', '白云区'], '深圳市': ['南山区', '福田区', '罗湖区', '宝安区', '龙岗区'], '佛山市': ['禅城区', '南海区', '顺德区'], '东莞市': ['莞城区', '南城区', '东城区'] },
+  '北京市': { '北京市': ['东城区', '西城区', '朝阳区', '海淀区', '丰台区'] },
+  '上海市': { '上海市': ['黄浦区', '徐汇区', '长宁区', '静安区', '浦东新区'] },
+  '浙江省': { '杭州市': ['上城区', '拱墅区', '西湖区', '滨江区', '余杭区'], '宁波市': ['海曙区', '江北区', '鄞州区'] },
+  '四川省': { '成都市': ['锦江区', '青羊区', '金牛区', '武侯区', '成华区'], '绵阳市': ['涪城区', '游仙区'] },
+};
+
 export default function Page() {
   const [query, setQuery] = useState('');
   const [city, setCity] = useState('');
@@ -18,9 +26,9 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [realtimeQuery, setRealtimeQuery] = useState('');
-  const [province, setProvince] = useState('广东省');
-  const [realtimeCity, setRealtimeCity] = useState('深圳市');
-  const [district, setDistrict] = useState('南山区');
+  const [province, setProvince] = useState('');
+  const [realtimeCity, setRealtimeCity] = useState('');
+  const [district, setDistrict] = useState('');
   const [scope, setScope] = useState<RealtimeSearchResponse['scope']>('district');
   const [realtimeConsent, setRealtimeConsent] = useState(true);
   const [realtimeResponse, setRealtimeResponse] = useState<RealtimeSearchResponse | null>(null);
@@ -186,6 +194,23 @@ export default function Page() {
     : response && !response.emergency
       ? { title: '已按本地规则匹配', summary: null }
       : null;
+  const cityOptions = province ? Object.keys(LOCATION_TREE[province] ?? {}) : [];
+  const districtOptions = province && realtimeCity ? LOCATION_TREE[province]?.[realtimeCity] ?? [] : [];
+  const selectProvince = (value: string) => {
+    setProvince(value);
+    setRealtimeCity('');
+    setDistrict('');
+    setScope('province');
+  };
+  const selectCity = (value: string) => {
+    setRealtimeCity(value);
+    setDistrict('');
+    setScope('city');
+  };
+  const selectDistrict = (value: string) => {
+    setDistrict(value);
+    setScope(value ? 'district' : 'city');
+  };
 
   function renderRealtimeCard(hospital: RealtimeSearchResponse['results'][number], index: number) {
     const breakdown = hospital.score_breakdown ?? {};
@@ -237,15 +262,12 @@ export default function Page() {
           <label htmlFor="query">症状或疾病</label>
           <textarea className={styles.query} id="query" name="query" value={realtimeQuery} onChange={(event) => { setRealtimeQuery(event.target.value); setQuery(event.target.value); }} required maxLength={500} rows={3} />
           <div className={styles.formGrid}>
-            <label htmlFor="province-main">省份<input id="province-main" list="province-options" value={province} onChange={(event) => setProvince(event.target.value)} required /></label>
-            <label htmlFor="city-main">城市<input id="city-main" list="city-options" value={realtimeCity} onChange={(event) => setRealtimeCity(event.target.value)} required /></label>
-            <label htmlFor="district-main">市区（可选）<input id="district-main" list="district-options" value={district} onChange={(event) => setDistrict(event.target.value)} /></label>
+            <label htmlFor="province-main">省份<select id="province-main" value={province} onChange={(event) => selectProvince(event.target.value)} required><option value="">请选择省份</option>{Object.keys(LOCATION_TREE).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+            <label htmlFor="city-main">城市<select id="city-main" value={realtimeCity} onChange={(event) => selectCity(event.target.value)} disabled={!province} required><option value="">{province ? '请选择城市' : '请先选择省份'}</option>{cityOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+            <label htmlFor="district-main">市区（可选）<select id="district-main" value={district} onChange={(event) => selectDistrict(event.target.value)} disabled={!realtimeCity}><option value="">{realtimeCity ? '请选择区县' : '请先选择城市'}</option>{districtOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
             <label htmlFor="scope-main">排名范围<select id="scope-main" value={scope} onChange={(event) => setScope(event.target.value as RealtimeSearchResponse['scope'])}><option value="district">市区级</option><option value="city">市级</option><option value="province">省级</option><option value="national">全国</option></select></label>
           </div>
           <div className={styles.locationTools}><button type="button" onClick={locateUser} disabled={locating}>{locating ? '正在定位…' : '使用当前位置'}</button>{locationNotice && <span role="status">{locationNotice}</span>}</div>
-          <datalist id="province-options"><option value="广东省" /><option value="北京市" /><option value="上海市" /><option value="浙江省" /><option value="四川省" /></datalist>
-          <datalist id="city-options"><option value="广州市" /><option value="深圳市" /><option value="北京市" /><option value="上海市" /><option value="杭州市" /><option value="成都市" /></datalist>
-          <datalist id="district-options"><option value="南山区" /><option value="越秀区" /><option value="天河区" /><option value="海珠区" /><option value="番禺区" /></datalist>
           <label htmlFor="city">所在城市</label>
           <select className={styles.city} id="city" name="city" value={city} onChange={(event) => setCity(event.target.value)}><option value="">不限城市</option><option value="上海">上海</option><option value="杭州">杭州</option></select>
           <label htmlFor="priority">匹配偏好</label>
