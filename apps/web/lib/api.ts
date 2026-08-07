@@ -46,6 +46,9 @@ export type RealtimeHospitalResult = {
   source_urls: string[];
   fetched_at: string;
   registration_url: string | null;
+  department?: string;
+  address?: string;
+  reason?: string;
 };
 
 export type RealtimeSearchResponse = {
@@ -61,6 +64,7 @@ export type RealtimeHospitalDetail = {
   id: string;
   name: string;
   city: string;
+  address?: string;
   introduction: string | null;
   departments: string[];
   doctors: string[];

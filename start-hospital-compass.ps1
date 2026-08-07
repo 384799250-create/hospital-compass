@@ -9,7 +9,7 @@ if (-not $bochaKey) {
 
 Start-Process powershell.exe -ArgumentList @(
   '-NoExit', '-Command',
-  "`$env:BOCHA_API_KEY=[Environment]::GetEnvironmentVariable('BOCHA_API_KEY','User'); Set-Location '$apiPath'; python -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+  "`$env:BOCHA_API_KEY=[Environment]::GetEnvironmentVariable('BOCHA_API_KEY','User'); `$env:DEEPSEEK_API_KEY=[Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY','User'); Set-Location '$apiPath'; python -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
 )
 Start-Process powershell.exe -ArgumentList @(
   '-NoExit', '-Command',

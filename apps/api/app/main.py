@@ -18,6 +18,7 @@ from app.importer import validate_import
 from app.schemas import AIMatchRequest, MatchRequest, RealtimeSearchRequest
 from app.bocha_search import BochaSearchClient
 from app.realtime_search import candidate_from_document, merge_hospital_candidates, rank_candidates
+from app.web_ranker import synthesize_hospital_results
 
 logger = logging.getLogger(__name__)
 app = FastAPI()
@@ -185,6 +186,14 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         location=request.location,
         scope=request.scope,
     )
+    synthesized = synthesize_hospital_results(
+        query=request.query,
+        location=request.location.model_dump(),
+        directions=directions,
+        results=results,
+    ) if request.ai_consent else None
+    if synthesized is not None:
+        results = synthesized
     if not results:
         return {
             'status': 'NO_RESULTS',
@@ -202,6 +211,8 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
             'id': result['id'],
             'name': result['name'],
             'city': result['city'],
+            'address': result.get('address') or result['city'],
+            'department': result.get('department') or ('、'.join(directions)),
             'introduction': next((source['snippet'] for source in result['sources'] if source['snippet']), None),
             'departments': list(directions),
             'doctors': [],
