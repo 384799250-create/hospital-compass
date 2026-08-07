@@ -154,10 +154,10 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
 
     search_client = BochaSearchClient()
     search_queries = [
-        ' '.join(part for part in (request.query, *directions, request.location.province, request.location.city, request.location.district) if part),
-        ' '.join(part for part in (request.query, *directions, request.location.province, request.location.city) if part),
-        ' '.join(part for part in (request.query, *directions, request.location.province) if part),
-        ' '.join(part for part in (request.query, *directions, '全国医院') if part),
+        ' '.join(part for part in (request.query, *directions, request.location.province, request.location.city, request.location.district, '医院 官网') if part),
+        ' '.join(part for part in (request.query, *directions, request.location.province, request.location.city, '三甲医院 科室') if part),
+        ' '.join(part for part in (request.query, *directions, request.location.province, '医院 专科') if part),
+        ' '.join(part for part in (request.query, *directions, '全国医院 官方网站') if part),
     ]
     search_results = [
         await run_in_threadpool(search_client.search, query, 10)

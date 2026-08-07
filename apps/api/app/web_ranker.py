@@ -16,10 +16,10 @@ DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
 class SynthesizedHospital(BaseModel):
     id: str
     name: str = Field(min_length=1, max_length=100)
-    department: str = Field(default='', max_length=80)
-    address: str = Field(default='', max_length=120)
+    department: str | None = Field(default=None, max_length=80)
+    address: str | None = Field(default=None, max_length=120)
     score: float = Field(ge=0, le=100)
-    reason: str = Field(default='', max_length=240)
+    reason: str | None = Field(default=None, max_length=240)
 
 
 class SynthesisPayload(BaseModel):
@@ -83,7 +83,9 @@ def synthesize_hospital_results(
             if not 200 <= getattr(response, 'status', 200) < 300:
                 return None
             payload = json.loads(response.read().decode('utf-8'))
-        content = payload['choices'][0]['message']['content']
+        content = payload['choices'][0]['message']['content'].strip()
+        if content.startswith('```'):
+            content = content.split('\n', 1)[1].rsplit('```', 1)[0].strip()
         parsed = SynthesisPayload.model_validate(json.loads(content))
     except (HTTPError, OSError, TypeError, URLError, UnicodeDecodeError,
             json.JSONDecodeError, KeyError, IndexError, ValidationError) as exc:
@@ -99,7 +101,7 @@ def synthesize_hospital_results(
         base['name'] = item.name
         base['score'] = round(item.score, 2)
         base['score_reasons'] = [item.reason] if item.reason else base.get('score_reasons', [])
-        base['department'] = item.department
+        base['department'] = item.department or ''
         base['address'] = item.address or base.get('city', '')
         synthesized.append(base)
     return synthesized[:10] or None
