@@ -183,9 +183,10 @@ export default function Page() {
             <label htmlFor="ai-consent"><input id="ai-consent" type="checkbox" checked={aiConsent} onChange={(event) => setAiConsent(event.target.checked)} />同意将本次描述发送给 DeepSeek 进行就医方向整理</label>
             <p>AI 仅整理就医方向，不提供诊断或治疗建议。</p>
           </div>
-          <button ref={submitButtonRef} type="submit" disabled={loading}>{loading ? '匹配中…' : '开始匹配'}</button>
+          <button ref={submitButtonRef} type="submit" disabled={realtimeLoading}>{realtimeLoading && <span className={styles.buttonSpinner} aria-hidden="true" />}{realtimeLoading ? '正在匹配…' : '开始匹配'}</button>
         </form>
         <div className={styles.quickTags}><span>常见就医方向：</span><button type="button" onClick={() => setQuery('冠心病')}>心血管疾病</button><button type="button" onClick={() => setQuery('儿童发热咳嗽')}>儿童发热咳嗽</button><button type="button" onClick={() => setQuery('肿瘤治疗')}>肿瘤治疗</button><button type="button" onClick={() => setQuery('关节疼痛')}>关节疼痛</button></div>
+        {realtimeLoading && <div className={styles.loadingState} role="status" aria-live="polite"><span className={styles.loadingBars} aria-hidden="true"><i /><i /><i /></span><div><strong>正在检索公开资料</strong><p>正在根据症状、位置和排名范围整理医院信息，请稍候。</p></div></div>}
         {realtimeError && <p className={styles.notice} role="alert">{realtimeError}</p>}
         {realtimeResponse && realtimeResponse.status !== 'OK' && <p className={styles.notice}>{realtimeResponse.status === 'SEARCH_UNAVAILABLE' ? '暂时无法连接公开资料搜索服务，请稍后重试。你的输入没有问题。' : realtimeResponse.status === 'NO_RESULTS' ? '暂未找到符合当前范围的医院资料，请扩大排名范围或补充症状描述。' : '当前描述可能需要急诊处理，请优先联系 120。'}</p>}
         {realtimeResponse?.status === 'OK' && <div className={styles.cards} aria-label="实时医院排名">{realtimeResponse.results.map((hospital, index) => <article className={styles.card} key={hospital.id}><p>第 {index + 1} 名 · 综合分 {hospital.score}</p><h3>{hospital.name}</h3><p>{hospital.city}</p><dl><div><dt>排名依据</dt><dd>{hospital.score_reasons.join('；')}</dd></div><div><dt>资料更新时间</dt><dd>{hospital.fetched_at}</dd></div></dl><button type="button" onClick={() => void openDetail(hospital.id)}>查看医院详情</button></article>)}</div>}
