@@ -164,11 +164,11 @@ export default function Page() {
         <div className={styles.artwork} aria-hidden="true"><i /><b /><em /></div>
       </section>
 
-      <section className={styles.search} aria-label="医院信息匹配">
+      <section id="match" className={`${styles.search} ${styles.match}`} aria-label="医院信息匹配">
         <div className={styles.panelHeading}><span>01</span><h2>告诉我们你的需求</h2></div>
         <form onSubmit={submitRealtime} className={styles.form}>
           <label htmlFor="query">症状或疾病</label>
-          <textarea id="query" name="query" value={realtimeQuery} onChange={(event) => { setRealtimeQuery(event.target.value); setQuery(event.target.value); }} required maxLength={500} rows={3} />
+          <textarea className={styles.query} id="query" name="query" value={realtimeQuery} onChange={(event) => { setRealtimeQuery(event.target.value); setQuery(event.target.value); }} required maxLength={500} rows={3} />
           <div className={styles.formGrid}>
             <label htmlFor="province-main">省份<input id="province-main" value={province} onChange={(event) => setProvince(event.target.value)} required /></label>
             <label htmlFor="city-main">城市<input id="city-main" value={realtimeCity} onChange={(event) => setRealtimeCity(event.target.value)} required /></label>
@@ -176,9 +176,9 @@ export default function Page() {
             <label htmlFor="scope-main">排名范围<select id="scope-main" value={scope} onChange={(event) => setScope(event.target.value as RealtimeSearchResponse['scope'])}><option value="district">市区级</option><option value="city">市级</option><option value="province">省级</option><option value="national">全国</option></select></label>
           </div>
           <label htmlFor="city">所在城市</label>
-          <select id="city" name="city" value={city} onChange={(event) => setCity(event.target.value)}><option value="">不限城市</option><option value="上海">上海</option><option value="杭州">杭州</option></select>
+          <select className={styles.city} id="city" name="city" value={city} onChange={(event) => setCity(event.target.value)}><option value="">不限城市</option><option value="上海">上海</option><option value="杭州">杭州</option></select>
           <label htmlFor="priority">匹配偏好</label>
-          <select id="priority" name="priority" value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}><option value="overall">综合信息</option><option value="specialty">专科方向</option><option value="convenience">就近便利</option></select>
+          <select className={styles.priority} id="priority" name="priority" value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}><option value="overall">综合信息</option><option value="specialty">专科方向</option><option value="convenience">就近便利</option></select>
           <div className={styles.aiConsent}>
             <label htmlFor="ai-consent"><input id="ai-consent" type="checkbox" checked={aiConsent} onChange={(event) => setAiConsent(event.target.checked)} />同意将本次描述发送给 DeepSeek 进行就医方向整理</label>
             <p>AI 仅整理就医方向，不提供诊断或治疗建议。</p>
