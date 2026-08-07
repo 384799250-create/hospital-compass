@@ -35,6 +35,12 @@ _ENGLISH_CITY_NAMES = {
     'Shanghai': '上海市', 'Hangzhou': '杭州市', 'Wuhan': '武汉市',
     'Nanjing': '南京市', 'Chengdu': '成都市',
 }
+_HOSPITAL_CITY_HINTS = {
+    '华中科技大学同济医学院附属协和医院': '武汉市',
+    '复旦大学附属中山医院': '上海市',
+    '中国人民解放军总医院': '北京市',
+    '深圳市罗湖区人民医院': '深圳市',
+}
 
 _AUTHORIZED_REGISTRATION_HOSTS = frozenset({
     '114yygh.com',
@@ -300,8 +306,16 @@ def candidate_from_document(
     specialties = metadata.get('specialties') or ()
     if isinstance(specialties, str):
         specialties = (specialties,)
+    hospital_name = _hospital_name_from_title(title)
+    if '医院' not in hospital_name and 'hospital' not in hospital_name.casefold():
+        return None
+    if not re.search(r'[\u4e00-\u9fff]', hospital_name):
+        return None
+    hinted_city = _HOSPITAL_CITY_HINTS.get(hospital_name)
+    if hinted_city and hinted_city != requested[1]:
+        return None
     return HospitalCandidate(
-        name=_hospital_name_from_title(title),
+        name=hospital_name,
         city=city,
         province=province,
         district=district,

@@ -137,3 +137,35 @@ def test_candidate_rejects_known_english_hospital_from_other_city():
     )
 
     assert candidate is None
+
+
+def test_candidate_rejects_english_department_title_without_hospital_entity():
+    document = SearchDocument(
+        title='Cardiovascular Medicine Ward 1-英文版',
+        url='https://www.sz.gov.cn/hospital/cardiovascular-medicine',
+        snippet='Cardiovascular medicine department information',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '深圳市', 'district': '南山区'},
+    )
+
+    assert candidate is None
+
+
+def test_candidate_rejects_unmapped_english_hospital_name():
+    document = SearchDocument(
+        title='Fuwai Hospital',
+        url='https://www.fuwai.com/en/cardiology',
+        snippet='Cardiovascular medicine hospital',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '深圳市', 'district': '南山区'},
+    )
+
+    assert candidate is None
