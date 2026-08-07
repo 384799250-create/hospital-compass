@@ -271,6 +271,7 @@ def candidate_from_document(
     *,
     location: Location | Mapping[str, str] | LocationParts,
     official_domains: frozenset[str] = frozenset(),
+    require_location_evidence: bool = False,
 ) -> HospitalCandidate | None:
     """Convert a search document to a conservative hospital candidate."""
     requested = parse_location(location)
@@ -293,12 +294,16 @@ def candidate_from_document(
     for part in requested[:2]:
         location_tokens.extend(_LOCATION_ALIASES.get(part, (part,)))
     has_location_evidence = any(token.casefold() in searchable_text.casefold() for token in location_tokens)
+    city_tokens = _LOCATION_ALIASES.get(requested[1], (requested[1],))
+    has_city_evidence = any(token.casefold() in searchable_text.casefold() for token in city_tokens)
     has_hospital_entity = any(term in searchable_text.casefold() for term in ('hospital', 'medical center', 'medical centre', '医院', '医科大学'))
     requested_city = requested[1]
     for english_city, chinese_city in _ENGLISH_CITY_NAMES.items():
         if english_city.casefold() in searchable_text.casefold() and chinese_city != requested_city and not explicit_location:
             return None
     if not explicit_location and not has_hospital_entity:
+        return None
+    if require_location_evidence and not explicit_location and not has_city_evidence:
         return None
     city = str(metadata.get('city') or requested[1]).strip()
     province = str(metadata.get('province') or requested[0]).strip()

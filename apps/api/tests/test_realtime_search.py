@@ -169,3 +169,70 @@ def test_candidate_rejects_unmapped_english_hospital_name():
     )
 
     assert candidate is None
+
+
+def test_local_scope_rejects_hospital_without_requested_city_evidence():
+    document = SearchDocument(
+        title='Cardiology - Xiangya Hospital Central South University',
+        url='https://www.xiangya.com.cn/en/cardiology',
+        snippet='Cardiology department and appointment information.',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '广州市', 'district': '南山区'},
+        require_location_evidence=True,
+    )
+
+    assert candidate is None
+
+
+def test_local_scope_keeps_hospital_with_requested_city_evidence():
+    document = SearchDocument(
+        title='Cardiology - Sun Yat-Sen Memorial Hospital',
+        url='https://www.gzsys.org.cn/cardiology',
+        snippet='Guangzhou hospital cardiology department',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '广州市', 'district': '南山区'},
+        require_location_evidence=True,
+    )
+
+    assert candidate is not None
+
+
+def test_local_scope_rejects_province_only_evidence():
+    document = SearchDocument(
+        title='Cardiology - Sun Yat-Sen Memorial Hospital',
+        url='https://example.org/guangdong-cardiology-ranking',
+        snippet='Guangdong province cardiovascular hospital ranking.',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '广州市', 'district': '南山区'},
+        require_location_evidence=True,
+    )
+
+    assert candidate is None
+
+
+def test_national_scope_does_not_require_city_evidence():
+    document = SearchDocument(
+        title='Cardiology - Xiangya Hospital Central South University',
+        url='https://www.xiangya.com.cn/en/cardiology',
+        snippet='Cardiology department and appointment information.',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '广州市', 'district': '南山区'},
+    )
+
+    assert candidate is not None

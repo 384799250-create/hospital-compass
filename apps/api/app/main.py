@@ -210,7 +210,11 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
     candidates = [
         candidate
         for document in documents
-        if (candidate := candidate_from_document(document, location=request.location)) is not None
+        if (candidate := candidate_from_document(
+            document,
+            location=request.location,
+            require_location_evidence=request.scope in {'district', 'city'},
+        )) is not None
     ]
     candidates = merge_hospital_candidates(candidates)
     results = rank_candidates(

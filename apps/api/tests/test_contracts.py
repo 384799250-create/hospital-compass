@@ -79,7 +79,7 @@ def test_realtime_filters_scope_caps_ten_and_orders_by_weight(client, monkeypatc
     ]
     documents.append(SearchDocument(title='Outside City', url='https://example.org/outside',
                                     snippet='public 三甲 cardiology', fetched_at=fetched_at))
-    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location: HospitalCandidate(
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location, **kwargs: HospitalCandidate(
         name=document.title,
         city='Guangzhou' if document.title == 'Outside City' else 'Shenzhen',
         province='Guangdong', district='Nanshan', sources=[document],
@@ -111,7 +111,7 @@ def test_realtime_result_has_short_lived_detail_context(client, monkeypatch):
         title='Shenzhen Heart Hospital', url='https://hospital.example.org',
         snippet='Cardiology department introduction', fetched_at=datetime(2026, 8, 6, tzinfo=UTC),
     )
-    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location: HospitalCandidate(
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location, **kwargs: HospitalCandidate(
         name='Shenzhen Heart Hospital', city='Shenzhen', province='Guangdong', district='Nanshan',
         sources=[document], specialties=('cardiology',),
     ))
