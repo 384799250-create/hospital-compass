@@ -236,3 +236,21 @@ def test_national_scope_does_not_require_city_evidence():
     )
 
     assert candidate is not None
+
+
+def test_candidate_extracts_hospital_entity_from_search_snippet():
+    document = SearchDocument(
+        title='Guangzhou cardiology hospital ranking',
+        url='https://example.org/guangzhou-cardiology',
+        snippet='广东省人民医院 心血管内科全国第10 广东省 广州市',
+        fetched_at='2026-08-07T00:00:00Z',
+    )
+
+    candidate = candidate_from_document(
+        document,
+        location={'province': '广东省', 'city': '广州市', 'district': '南山区'},
+        require_location_evidence=True,
+    )
+
+    assert candidate is not None
+    assert candidate.name == '广东省人民医院'

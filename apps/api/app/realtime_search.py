@@ -127,13 +127,21 @@ def _hospital_name_from_title(title: str) -> str:
     for english_name, chinese_name in sorted(_ENGLISH_HOSPITAL_NAMES.items(), key=lambda item: -len(item[0])):
         if english_name in lowered:
             return chinese_name
-    chinese_entities = re.findall(r'[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9·（）()\-]{1,79}医院', title)
+    chinese_entities = re.findall(r'[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9·（）()\-]{1,79}?医院', title)
     if chinese_entities:
         return chinese_entities[-1].strip()
     english_entities = re.findall(r"[A-Za-z][A-Za-z0-9'&.\- ]{1,79}\bHospital(?:\s*\([^)]*\))?", title)
     if english_entities:
         return english_entities[-1].strip(' _-')
     return title.split(' - ')[0].split('|')[0].strip()
+
+
+_GENERIC_HOSPITAL_NAME_MARKERS = (
+    '医院大全', '医院排名', '医院排行榜', '最好的医院', '哪家医院',
+    '正规医院', '综合医院', '按三级甲等医院', '科室现有医院',
+    '卫生部以及医院', '名医汇', '排行榜', '全国排名', '库基于',
+    '为广大患者', '医生信息来自',
+)
 
 
 def parse_location(location: Location | Mapping[str, str]) -> LocationParts:
@@ -311,7 +319,15 @@ def candidate_from_document(
     specialties = metadata.get('specialties') or ()
     if isinstance(specialties, str):
         specialties = (specialties,)
-    hospital_name = _hospital_name_from_title(title)
+    # Search snippets often contain the actual provider name while the title
+    # is a generic ranking or department page heading.
+    hospital_name = _hospital_name_from_title(f'{title} {snippet}')
+    if '院区' in hospital_name and '(' in hospital_name:
+        hospital_name = hospital_name.rsplit('(', 1)[-1].strip(' )）')
+    if '院区' in hospital_name and '（' in hospital_name:
+        hospital_name = hospital_name.rsplit('（', 1)[-1].strip(' ）)')
+    if any(marker in hospital_name for marker in _GENERIC_HOSPITAL_NAME_MARKERS):
+        return None
     if '医院' not in hospital_name and 'hospital' not in hospital_name.casefold():
         return None
     if not re.search(r'[\u4e00-\u9fff]', hospital_name):

@@ -191,6 +191,10 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         f'{place_term} {specialty_term} top hospital',
         f'{place_term} hospital {specialty_term} department',
         f'China {specialty_term} hospital official website',
+        f'{request.location.city} {request.query} 医院 排名',
+        f'{request.location.city} {" ".join(directions)} 医院 官方',
+        f'{request.location.city} 三甲 {" ".join(directions)} 医院',
+        f'{request.location.city} 心脏中心 医院 官方',
     ]
     search_results = [
         await run_in_threadpool(search_client.search, query, 10)
