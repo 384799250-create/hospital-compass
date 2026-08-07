@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -76,6 +76,8 @@ def merge_hospital_candidates(candidates: list[HospitalCandidate]) -> list[Hospi
 
 
 def _newest_source(candidate: HospitalCandidate) -> datetime:
+    if not candidate.sources:
+        return datetime.min.replace(tzinfo=UTC)
     return max(source.fetched_at for source in candidate.sources)
 
 

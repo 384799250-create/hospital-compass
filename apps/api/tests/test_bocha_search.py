@@ -63,6 +63,33 @@ def test_search_caps_requested_result_count_at_ten():
     assert captured['body']['count'] == 10
 
 
+def test_payload_documents_are_capped_at_ten_even_when_provider_returns_more():
+    payload = {
+        'data': {
+            'webPages': {
+                'value': [
+                    {
+                        'name': f'Hospital {index}',
+                        'url': f'https://hospitals.example/{index}',
+                        'snippet': 'public source',
+                    }
+                    for index in range(15)
+                ],
+            },
+        },
+    }
+
+    def transport(request, timeout):
+        return FakeResponse(payload)
+
+    result = BochaSearchClient(
+        settings={'BOCHA_API_KEY': 'test-key'}, transport=transport,
+    ).search('cardiology', count=10)
+
+    assert len(result.documents) == 10
+    assert result.documents[-1].title == 'Hospital 9'
+
+
 def test_nonofficial_urls_are_never_marked_as_registration_links():
     candidate = HospitalCandidate.from_document(
         name='Example Hospital',
@@ -101,3 +128,11 @@ def test_same_hospital_and_city_merge_and_keep_newest_source_record():
 
     assert len(merged) == 1
     assert [source.url for source in merged[0].sources] == ['https://www.example-hospital.cn/new']
+
+
+def test_merge_keeps_valid_candidate_with_empty_sources_without_raising():
+    candidate = HospitalCandidate(name='Source Pending Hospital', city='Shenzhen')
+
+    merged = merge_hospital_candidates([candidate])
+
+    assert merged == [candidate]

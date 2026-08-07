@@ -91,6 +91,8 @@ def _documents_from_payload(payload: object) -> list[SearchDocument]:
     fetched_at = datetime.now(UTC)
     documents = []
     for value in values:
+        if len(documents) >= 10:
+            break
         if not isinstance(value, dict):
             continue
         try:
