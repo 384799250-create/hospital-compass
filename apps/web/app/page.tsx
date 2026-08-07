@@ -83,7 +83,7 @@ export default function Page() {
     try {
       const result = await realtimeSearchHospitals({
         query: realtimeQuery,
-        location: { province, city: realtimeCity, district },
+        location: { province: province.trim(), city: realtimeCity.trim(), district: district.trim() || realtimeCity.trim() },
         scope,
         ai_consent: realtimeConsent,
       });
@@ -166,9 +166,15 @@ export default function Page() {
 
       <section className={styles.search} aria-label="医院信息匹配">
         <div className={styles.panelHeading}><span>01</span><h2>告诉我们你的需求</h2></div>
-        <form onSubmit={submit} className={styles.form}>
+        <form onSubmit={submitRealtime} className={styles.form}>
           <label htmlFor="query">症状或疾病</label>
-          <textarea id="query" name="query" value={query} onChange={(event) => setQuery(event.target.value)} required maxLength={500} rows={3} />
+          <textarea id="query" name="query" value={realtimeQuery} onChange={(event) => { setRealtimeQuery(event.target.value); setQuery(event.target.value); }} required maxLength={500} rows={3} />
+          <div className={styles.formGrid}>
+            <label htmlFor="province-main">省份<input id="province-main" value={province} onChange={(event) => setProvince(event.target.value)} required /></label>
+            <label htmlFor="city-main">城市<input id="city-main" value={realtimeCity} onChange={(event) => setRealtimeCity(event.target.value)} required /></label>
+            <label htmlFor="district-main">市区（可选）<input id="district-main" value={district} onChange={(event) => setDistrict(event.target.value)} /></label>
+            <label htmlFor="scope-main">排名范围<select id="scope-main" value={scope} onChange={(event) => setScope(event.target.value as RealtimeSearchResponse['scope'])}><option value="district">市区级</option><option value="city">市级</option><option value="province">省级</option><option value="national">全国</option></select></label>
+          </div>
           <label htmlFor="city">所在城市</label>
           <select id="city" name="city" value={city} onChange={(event) => setCity(event.target.value)}><option value="">不限城市</option><option value="上海">上海</option><option value="杭州">杭州</option></select>
           <label htmlFor="priority">匹配偏好</label>
