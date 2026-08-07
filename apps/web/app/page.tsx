@@ -5,10 +5,13 @@ import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { AIMatchResponse, MatchApiError, MatchResponse, RealtimeHospitalDetail, RealtimeSearchResponse, aiMatchHospitals, getRealtimeHospitalDetail, matchHospitals, realtimeSearchHospitals } from '../lib/api';
 import { addFavorite, clearProfile, getProfile, removeFavorite } from '../lib/local-profile';
 import styles from './page.module.css';
+import provinceData from '../data/province.json';
+import cityData from '../data/city.json';
+import areaData from '../data/area.json';
 
 const FALLBACK_COPY = '匹配服务暂时不可用。请查询当地卫生健康部门地址与医院官方站点；如情况紧急，请立即急诊或拨打 120。';
 
-const LOCATION_TREE: Record<string, Record<string, string[]>> = {
+const LEGACY_LOCATION_TREE: Record<string, Record<string, string[]>> = {
   '广东省': { '广州市': ['越秀区', '天河区', '海珠区', '番禺区', '白云区'], '深圳市': ['南山区', '福田区', '罗湖区', '宝安区', '龙岗区'], '佛山市': ['禅城区', '南海区', '顺德区'], '东莞市': ['莞城区', '南城区', '东城区'] },
   '北京市': { '北京市': ['东城区', '西城区', '朝阳区', '海淀区', '丰台区'] },
   '上海市': { '上海市': ['黄浦区', '徐汇区', '长宁区', '静安区', '浦东新区'] },
@@ -43,6 +46,19 @@ const LOCATION_TREE: Record<string, Record<string, string[]>> = {
   '香港特别行政区': { '香港特别行政区': [] },
   '澳门特别行政区': { '澳门特别行政区': [] },
 };
+
+type RegionRow = { code: string; name: string; province: string; city?: string; area?: string };
+const LOCATION_TREE: Record<string, Record<string, string[]>> = (provinceData as RegionRow[]).reduce((tree, provinceRow) => {
+  const cities = (cityData as RegionRow[]).filter((row) => row.province === provinceRow.province);
+  const cityRows = cities.length ? cities : [{ name: provinceRow.name, province: provinceRow.province, code: provinceRow.code }];
+  tree[provinceRow.name] = Object.fromEntries(cityRows.map((cityRow) => [
+    cityRow.name,
+    (areaData as RegionRow[])
+      .filter((areaRow) => areaRow.province === provinceRow.province && areaRow.city === (cityRow.city ?? '01'))
+      .map((areaRow) => areaRow.name),
+  ]));
+  return tree;
+}, {} as Record<string, Record<string, string[]>>);
 
 export default function Page() {
   const [query, setQuery] = useState('');
