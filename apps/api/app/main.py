@@ -173,17 +173,32 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         if (candidate := candidate_from_document(document, location=request.location)) is not None
     ]
     candidates = merge_hospital_candidates(candidates)
+    effective_scope = request.scope
+    scope_fallback = False
     results = rank_candidates(
         candidates,
         directions=directions,
         location=request.location,
-        scope=request.scope,
+        scope=effective_scope,
     )
+    # Public snippets often include the city but omit the district. Keep the
+    # district as the default, then transparently widen to city scope instead
+    # of claiming that the district has no hospitals.
+    if not results and request.scope == 'district':
+        results = rank_candidates(
+            candidates,
+            directions=directions,
+            location=request.location,
+            scope='city',
+        )
+        effective_scope = 'city' if results else request.scope
+        scope_fallback = bool(results)
     if not results:
         return {
             'status': 'NO_RESULTS',
             'directions': directions,
-            'scope': request.scope,
+            'scope': effective_scope,
+            'scope_fallback': False,
             'results': [],
             'sources': [],
             'fetched_at': None,
@@ -206,7 +221,8 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
     return {
         'status': 'OK',
         'directions': directions,
-        'scope': request.scope,
+        'scope': effective_scope,
+        'scope_fallback': scope_fallback,
         'results': results[:10],
         'sources': sources,
         'fetched_at': fetched_at,
