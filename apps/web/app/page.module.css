@@ -167,6 +167,9 @@ label[for="city"], .city { display: none; }
   .card > button:not(.favorite) { width:100%; }
 }
 .consentRequired { grid-column:1 / -1; margin:0; color:#9a3d2f; font-size:12px; }
+.locationTools { grid-column:1 / -1; display:flex; align-items:center; gap:12px; min-height:28px; color:#59736e; font-size:12px; }
+.locationTools button { border:1px solid #9ccfc4; border-radius:3px; padding:7px 11px; background:#f4fcf9; color:#166c63; font:inherit; font-size:12px; font-weight:800; cursor:pointer; }
+.locationTools button:disabled { cursor:wait; opacity:.65; }
 .fallbackNotice { grid-column:1; display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px 14px; border:1px solid #e6c889; background:#fff9e9; color:#705421; font-size:13px; }
 .fallbackNotice button { border:1px solid #b9913f; border-radius:3px; padding:7px 11px; background:#fff; color:#705421; font:inherit; font-size:12px; font-weight:800; cursor:pointer; }
 .scoreDetails { margin-top:16px; padding-top:12px; border-top:1px solid #e0ebe8; color:#315c57; }

@@ -26,6 +26,8 @@ export default function Page() {
   const [realtimeResponse, setRealtimeResponse] = useState<RealtimeSearchResponse | null>(null);
   const [realtimeLoading, setRealtimeLoading] = useState(false);
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
+  const [locationNotice, setLocationNotice] = useState<string | null>(null);
+  const [locating, setLocating] = useState(false);
   const [detail, setDetail] = useState<RealtimeHospitalDetail | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
@@ -104,6 +106,37 @@ export default function Page() {
   async function switchRealtimeScope(nextScope: RealtimeSearchResponse['scope']) {
     setScope(nextScope);
     await searchRealtime(nextScope);
+  }
+
+  function locateUser() {
+    if (!navigator.geolocation) {
+      setLocationNotice('当前浏览器不支持自动定位，请手动填写地址。');
+      return;
+    }
+    setLocating(true);
+    setLocationNotice(null);
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+      try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=zh-CN&lat=${coords.latitude}&lon=${coords.longitude}`);
+        if (!response.ok) throw new Error('reverse geocode failed');
+        const payload = await response.json() as { address?: Record<string, string> };
+        const address = payload.address ?? {};
+        const nextProvince = address.state || address.province || '';
+        const nextCity = address.city || address.municipality || address.town || '';
+        const nextDistrict = address.suburb || address.district || address.county || '';
+        if (nextProvince) setProvince(nextProvince);
+        if (nextCity) setRealtimeCity(nextCity);
+        if (nextDistrict) setDistrict(nextDistrict);
+        setLocationNotice(nextCity ? `已定位到${nextCity}${nextDistrict || ''}` : '已获取定位，但未解析出城市，请确认地址。');
+      } catch {
+        setLocationNotice('定位成功但地址解析失败，请手动确认省、市、区。');
+      } finally {
+        setLocating(false);
+      }
+    }, () => {
+      setLocating(false);
+      setLocationNotice('未获得定位权限，请手动填写地址。');
+    }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
   }
 
   async function openDetail(id: string) {
@@ -204,11 +237,15 @@ export default function Page() {
           <label htmlFor="query">症状或疾病</label>
           <textarea className={styles.query} id="query" name="query" value={realtimeQuery} onChange={(event) => { setRealtimeQuery(event.target.value); setQuery(event.target.value); }} required maxLength={500} rows={3} />
           <div className={styles.formGrid}>
-            <label htmlFor="province-main">省份<input id="province-main" value={province} onChange={(event) => setProvince(event.target.value)} required /></label>
-            <label htmlFor="city-main">城市<input id="city-main" value={realtimeCity} onChange={(event) => setRealtimeCity(event.target.value)} required /></label>
-            <label htmlFor="district-main">市区（可选）<input id="district-main" value={district} onChange={(event) => setDistrict(event.target.value)} /></label>
+            <label htmlFor="province-main">省份<input id="province-main" list="province-options" value={province} onChange={(event) => setProvince(event.target.value)} required /></label>
+            <label htmlFor="city-main">城市<input id="city-main" list="city-options" value={realtimeCity} onChange={(event) => setRealtimeCity(event.target.value)} required /></label>
+            <label htmlFor="district-main">市区（可选）<input id="district-main" list="district-options" value={district} onChange={(event) => setDistrict(event.target.value)} /></label>
             <label htmlFor="scope-main">排名范围<select id="scope-main" value={scope} onChange={(event) => setScope(event.target.value as RealtimeSearchResponse['scope'])}><option value="district">市区级</option><option value="city">市级</option><option value="province">省级</option><option value="national">全国</option></select></label>
           </div>
+          <div className={styles.locationTools}><button type="button" onClick={locateUser} disabled={locating}>{locating ? '正在定位…' : '使用当前位置'}</button>{locationNotice && <span role="status">{locationNotice}</span>}</div>
+          <datalist id="province-options"><option value="广东省" /><option value="北京市" /><option value="上海市" /><option value="浙江省" /><option value="四川省" /></datalist>
+          <datalist id="city-options"><option value="广州市" /><option value="深圳市" /><option value="北京市" /><option value="上海市" /><option value="杭州市" /><option value="成都市" /></datalist>
+          <datalist id="district-options"><option value="南山区" /><option value="越秀区" /><option value="天河区" /><option value="海珠区" /><option value="番禺区" /></datalist>
           <label htmlFor="city">所在城市</label>
           <select className={styles.city} id="city" name="city" value={city} onChange={(event) => setCity(event.target.value)}><option value="">不限城市</option><option value="上海">上海</option><option value="杭州">杭州</option></select>
           <label htmlFor="priority">匹配偏好</label>
