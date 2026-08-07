@@ -64,6 +64,11 @@
 .card { position:relative; border:1px solid var(--line); background:var(--paper); padding:22px 138px 20px 22px; transition:.2s; }
 .card:hover { box-shadow:0 13px 32px rgb(20 57 53 / 9%); transform:translateY(-2px); }
 .card h3 { margin:0 0 5px; font-size:18px; }
+.cardRank { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; color:#5b756f; font-size:12px; font-weight:800; letter-spacing:.02em; }
+.cardRank b { color:#0d6b63; font-size:12px; font-weight:850; white-space:nowrap; }
+.hospitalFacts { display:grid; grid-template-columns:minmax(0,.72fr) minmax(0,1.28fr); gap:12px 22px; margin:16px 0 0; padding-top:14px; border-top:1px solid #e0ebe8; }
+.hospitalFacts dt { color:#6a817c; font-size:11px; font-weight:800; letter-spacing:.06em; }
+.hospitalFacts dd { margin:4px 0 0; color:#234d48; font-size:13px; line-height:1.55; overflow-wrap:anywhere; }
 .card>p { margin:0 0 15px; color:#617a75; font-size:13px; }
 .card dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px 20px; margin:0; }
 .card dl div:last-child { grid-column:span 3; }
@@ -147,6 +152,8 @@ label[for="city"], .city { display: none; }
 .overview>div,.overview aside { min-height:112px; padding:22px 26px; }
 .guide { max-width:1280px; margin-top:34px; padding:30px 0; }
 .card { border-color:#d3e2de; box-shadow:none; padding:20px 138px 20px 22px; }
+.card > button:not(.favorite) { margin-top:18px; min-height:38px; border:1px solid #9ccfc4; border-radius:3px; padding:0 14px; background:#f4fcf9; color:#166c63; font:inherit; font-size:12px; font-weight:800; cursor:pointer; }
+.card > button:not(.favorite):hover { background:#e5f1ee; }
 .card:hover { box-shadow:0 8px 20px rgb(23 59 58 / 8%); transform:translateY(-1px); }
 .results::after { box-shadow:none; }
 .detailPanel { border-color:#cbded9; box-shadow:0 12px 28px rgb(23 59 58 / 8%); }
@@ -154,3 +161,8 @@ label[for="city"], .city { display: none; }
 @media (max-width:560px) { .match .form { grid-template-columns:1fr; } .match .form .priority,.match .form button { grid-column:1; grid-row:auto; } .match .form .formGrid { grid-template-columns:1fr; } }
 @media (prefers-reduced-motion: reduce) { .card { transition:none; } .card:hover { transform:none; } }
 @media (prefers-reduced-motion: reduce) { .buttonSpinner,.loadingBars i { animation:none; } .buttonSpinner { border-top-color:#fff; } }
+@media (max-width:560px) {
+  .hospitalFacts { grid-template-columns:1fr; gap:10px; }
+  .cardRank { align-items:flex-start; flex-direction:column; gap:4px; }
+  .card > button:not(.favorite) { width:100%; }
+}
