@@ -52,7 +52,6 @@ export type RealtimeSearchResponse = {
   status: 'OK' | 'EMERGENCY' | 'SEARCH_UNAVAILABLE' | 'NO_RESULTS';
   directions: string[];
   scope: 'district' | 'city' | 'province' | 'national';
-  scope_fallback?: boolean;
   results: RealtimeHospitalResult[];
   sources: string[];
   fetched_at: string | null;

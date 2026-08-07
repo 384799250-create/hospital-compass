@@ -152,12 +152,17 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         directions = list(dict.fromkeys(ai_response.directions or directions))
 
     search_client = BochaSearchClient()
-    search_result = await run_in_threadpool(
-        search_client.search,
-        ' '.join(part for part in (request.query, *directions, request.location.city) if part),
-        10,
-    )
-    if not search_result.available:
+    search_queries = [
+        ' '.join(part for part in (request.query, *directions, request.location.province, request.location.city, request.location.district) if part),
+        ' '.join(part for part in (request.query, *directions, request.location.province, request.location.city) if part),
+        ' '.join(part for part in (request.query, *directions, request.location.province) if part),
+        ' '.join(part for part in (request.query, *directions, '全国医院') if part),
+    ]
+    search_results = [
+        await run_in_threadpool(search_client.search, query, 10)
+        for query in dict.fromkeys(search_queries)
+    ]
+    if not any(result.available for result in search_results):
         return {
             'status': 'SEARCH_UNAVAILABLE',
             'directions': directions,
@@ -167,38 +172,24 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
             'fetched_at': None,
         }
 
+    documents = [document for result in search_results for document in result.documents]
     candidates = [
         candidate
-        for document in search_result.documents
+        for document in documents
         if (candidate := candidate_from_document(document, location=request.location)) is not None
     ]
     candidates = merge_hospital_candidates(candidates)
-    effective_scope = request.scope
-    scope_fallback = False
     results = rank_candidates(
         candidates,
         directions=directions,
         location=request.location,
-        scope=effective_scope,
+        scope=request.scope,
     )
-    # Public snippets often include the city but omit the district. Keep the
-    # district as the default, then transparently widen to city scope instead
-    # of claiming that the district has no hospitals.
-    if not results and request.scope == 'district':
-        results = rank_candidates(
-            candidates,
-            directions=directions,
-            location=request.location,
-            scope='city',
-        )
-        effective_scope = 'city' if results else request.scope
-        scope_fallback = bool(results)
     if not results:
         return {
             'status': 'NO_RESULTS',
             'directions': directions,
-            'scope': effective_scope,
-            'scope_fallback': False,
+            'scope': request.scope,
             'results': [],
             'sources': [],
             'fetched_at': None,
@@ -221,8 +212,7 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
     return {
         'status': 'OK',
         'directions': directions,
-        'scope': effective_scope,
-        'scope_fallback': scope_fallback,
+        'scope': request.scope,
         'results': results[:10],
         'sources': sources,
         'fetched_at': fetched_at,
