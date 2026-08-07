@@ -34,6 +34,7 @@ PUBLIC_HOSPITALS = tuple(
 )
 REALTIME_DETAIL_SESSIONS: dict[str, tuple[datetime, dict[str, object]]] = {}
 REALTIME_DETAIL_TTL = timedelta(minutes=15)
+_WIDER_SCOPE = {'district': 'city', 'city': 'province', 'province': 'national'}
 
 _SEARCH_CITY_NAMES = {
     '广州': 'Guangzhou', '广州市': 'Guangzhou', '深圳': 'Shenzhen', '深圳市': 'Shenzhen',
@@ -243,6 +244,8 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
             'results': [],
             'sources': [],
             'fetched_at': None,
+            'fallback_scope': _WIDER_SCOPE.get(request.scope),
+            'fallback_message': '当前区域暂无足够医院资料，可切换更高一级区域查看。' if request.scope != 'national' else None,
         }
     sources = list(dict.fromkeys(url for result in results for url in result['source_urls']))
     fetched_at = max(result['fetched_at'] for result in results)
@@ -268,6 +271,8 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         'results': results[:10],
         'sources': sources,
         'fetched_at': fetched_at,
+        'fallback_scope': _WIDER_SCOPE.get(request.scope) if len(results) < 10 else None,
+        'fallback_message': '当前区域医院较少，可切换更高一级区域查看。' if len(results) < 10 and request.scope != 'national' else None,
     }
 
 

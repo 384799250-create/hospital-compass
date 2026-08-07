@@ -20,6 +20,10 @@ class SynthesizedHospital(BaseModel):
     address: str | None = Field(default=None, max_length=120)
     score: float = Field(ge=0, le=100)
     reason: str | None = Field(default=None, max_length=240)
+    core_advantages: str | None = Field(default=None, max_length=300)
+    match_reason: str | None = Field(default=None, max_length=300)
+    evidence_status: str | None = Field(default=None, max_length=80)
+    score_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
 class SynthesisPayload(BaseModel):
@@ -31,6 +35,19 @@ SYSTEM_PROMPT = (
     '请输出严格 JSON：{"results":[{"id":"候选id","name":"真实医院名称","department":"相关科室","address":"资料中的地址或空字符串",'
     '"score":0到100的数字,"reason":"不超过100字的来源依据"}]}。'
     'name 必须是医院实体名称，不要复制搜索标题中的营销关键词；id 必须来自候选资料。'
+)
+
+# Keep the prompt ASCII-safe so Windows process encoding cannot corrupt the
+# JSON contract sent to DeepSeek.
+SYSTEM_PROMPT = (
+    'You are a Chinese hospital ranking editor. Return strict JSON only. '
+    'Use candidate evidence and the user query/location to rank up to ten hospitals. '
+    'Never invent addresses, doctors, departments, scores, or URLs. '
+    'Every result must contain id, name, department, address, score, reason, '
+    'core_advantages, match_reason, evidence_status, and score_breakdown. '
+    'Write core_advantages and match_reason in concise Chinese. '
+    'score_breakdown keys must be specialty, hospital_strength, geography, completeness, accessibility. '
+    'Use 暂无公开资料 when a fact is unavailable.'
 )
 
 
@@ -103,5 +120,12 @@ def synthesize_hospital_results(
         base['score_reasons'] = [item.reason] if item.reason else base.get('score_reasons', [])
         base['department'] = item.department or ''
         base['address'] = item.address or base.get('city', '')
+        base['core_advantages'] = item.core_advantages or next(
+            (source.get('snippet') for source in base.get('sources', []) if source.get('snippet')),
+            '暂无公开资料',
+        )
+        base['match_reason'] = item.match_reason or item.reason or '根据症状、科室和地理范围综合匹配。'
+        base['evidence_status'] = item.evidence_status or ('有公开资料' if base.get('sources') else '暂无公开资料')
+        base['score_breakdown'] = item.score_breakdown
         synthesized.append(base)
     return synthesized[:10] or None

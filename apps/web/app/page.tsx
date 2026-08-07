@@ -74,8 +74,7 @@ export default function Page() {
     }
   }
 
-  async function submitRealtime(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function searchRealtime(nextScope: RealtimeSearchResponse['scope']) {
     setRealtimeError(null);
     setRealtimeResponse(null);
     setDetail(null);
@@ -84,7 +83,7 @@ export default function Page() {
       const result = await realtimeSearchHospitals({
         query: realtimeQuery,
         location: { province: province.trim(), city: realtimeCity.trim(), district: district.trim() || realtimeCity.trim() },
-        scope,
+        scope: nextScope,
         ai_consent: realtimeConsent,
       });
       setRealtimeResponse(result);
@@ -95,6 +94,16 @@ export default function Page() {
     } finally {
       setRealtimeLoading(false);
     }
+  }
+
+  async function submitRealtime(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await searchRealtime(scope);
+  }
+
+  async function switchRealtimeScope(nextScope: RealtimeSearchResponse['scope']) {
+    setScope(nextScope);
+    await searchRealtime(nextScope);
   }
 
   async function openDetail(id: string) {
@@ -145,6 +154,31 @@ export default function Page() {
       ? { title: '已按本地规则匹配', summary: null }
       : null;
 
+  function renderRealtimeCard(hospital: RealtimeSearchResponse['results'][number], index: number) {
+    const breakdown = hospital.score_breakdown ?? {};
+    return (
+      <article className={styles.card} key={hospital.id}>
+        <div className={styles.cardRank}>第 {index + 1} 名 <b>综合评分 {hospital.score}</b></div>
+        <h3>{hospital.name}</h3>
+        <dl className={styles.hospitalFacts}>
+          <div><dt>核心优势</dt><dd>{hospital.core_advantages || '暂无公开资料'}</dd></div>
+          <div><dt>匹配理由</dt><dd>{hospital.match_reason || '根据症状、科室和地理范围综合匹配。'}</dd></div>
+          <div><dt>推荐科室</dt><dd>{realtimeResponse?.directions.length ? realtimeResponse.directions.join('、') : '暂无公开科室资料'}</dd></div>
+          <div><dt>医院地址</dt><dd>{hospital.address || hospital.city || '暂无公开地址资料'}</dd></div>
+        </dl>
+        <details className={styles.scoreDetails}>
+          <summary>评分详情</summary>
+          <dl>
+            {Object.entries(breakdown).map(([key, value]) => <div key={key}><dt>{({ specialty: '专科匹配度', hospital_strength: '医院专科实力', geography: '地理位置', completeness: '资料完整度', accessibility: '就医便利性' } as Record<string, string>)[key] || key}</dt><dd>{value}</dd></div>)}
+          </dl>
+          <p className={styles.evidenceStatus}>{hospital.evidence_status || '暂无公开资料'}</p>
+          {hospital.source_urls?.length ? <div className={styles.sourceLinks}>{hospital.source_urls.slice(0, 3).map((url) => <a key={url} href={url} target="_blank" rel="noreferrer">查看资料来源</a>)}</div> : null}
+        </details>
+        <button type="button" onClick={() => void openDetail(hospital.id)}>查看医院详情</button>
+      </article>
+    );
+  }
+
   return (
     <main className={styles.page} inert={showEmergency}>
       <nav className={styles.nav} aria-label="主导航">
@@ -183,13 +217,14 @@ export default function Page() {
             <label htmlFor="ai-consent"><input id="ai-consent" type="checkbox" checked={aiConsent} onChange={(event) => setAiConsent(event.target.checked)} />同意将本次描述发送给 DeepSeek 进行就医方向整理</label>
             <p>AI 仅整理就医方向，不提供诊断或治疗建议。</p>
           </div>
-          <button ref={submitButtonRef} type="submit" disabled={realtimeLoading}>{realtimeLoading && <span className={styles.buttonSpinner} aria-hidden="true" />}{realtimeLoading ? '正在匹配…' : '开始匹配'}</button>
+          {!realtimeConsent && <p className={styles.consentRequired} role="alert">请先同意使用 DeepSeek 进行就医方向整理。</p>}
+          <button ref={submitButtonRef} type="submit" disabled={realtimeLoading || !realtimeConsent}>{realtimeLoading && <span className={styles.buttonSpinner} aria-hidden="true" />}{realtimeLoading ? '正在匹配…' : '开始匹配'}</button>
         </form>
         <div className={styles.quickTags}><span>常见就医方向：</span><button type="button" onClick={() => setQuery('冠心病')}>心血管疾病</button><button type="button" onClick={() => setQuery('儿童发热咳嗽')}>儿童发热咳嗽</button><button type="button" onClick={() => setQuery('肿瘤治疗')}>肿瘤治疗</button><button type="button" onClick={() => setQuery('关节疼痛')}>关节疼痛</button></div>
         {realtimeLoading && <div className={styles.loadingState} role="status" aria-live="polite"><span className={styles.loadingBars} aria-hidden="true"><i /><i /><i /></span><div><strong>正在检索公开资料</strong><p>正在根据症状、位置和排名范围整理医院信息，请稍候。</p></div></div>}
         {realtimeError && <p className={styles.notice} role="alert">{realtimeError}</p>}
         {realtimeResponse && realtimeResponse.status !== 'OK' && <p className={styles.notice}>{realtimeResponse.status === 'SEARCH_UNAVAILABLE' ? '暂时无法连接公开资料搜索服务，请稍后重试。你的输入没有问题。' : realtimeResponse.status === 'NO_RESULTS' ? '暂未找到符合当前范围的医院资料，请扩大排名范围或补充症状描述。' : '当前描述可能需要急诊处理，请优先联系 120。'}</p>}
-        {realtimeResponse?.status === 'OK' && <><p className={styles.scopeNote}>当前排名范围：{realtimeResponse.scope}。系统已按区县、城市、省份和全国多个层级检索公开资料。</p><div className={styles.cards} aria-label="实时医院排名">{realtimeResponse.results.map((hospital, index) => <article className={styles.card} key={hospital.id}><div className={styles.cardRank}>第 {index + 1} 名 <b>综合评分 {hospital.score}</b></div><h3>{hospital.name}</h3><dl className={styles.hospitalFacts}><div><dt>推荐科室</dt><dd>{realtimeResponse.directions.length ? realtimeResponse.directions.join('、') : '暂无公开科室资料'}</dd></div><div><dt>医院地址</dt><dd>{hospital.city || '暂无公开地址资料'}</dd></div></dl><button type="button" onClick={() => void openDetail(hospital.id)}>查看医院详情</button></article>)}</div></>}
+        {realtimeResponse?.status === 'OK' && <><p className={styles.scopeNote}>当前排名范围：{({ district: '市区级', city: '市级', province: '省级', national: '全国' } as Record<string, string>)[realtimeResponse.scope]}。系统已按用户选择的最小地址范围检索公开资料。</p>{realtimeResponse.fallback_message && <div className={styles.fallbackNotice}><span>{realtimeResponse.fallback_message}</span>{realtimeResponse.fallback_scope && <button type="button" onClick={() => void switchRealtimeScope(realtimeResponse.fallback_scope!)}>切换至更高一级范围</button>}</div>}<div className={styles.cards} aria-label="实时医院排名">{realtimeResponse.results.map(renderRealtimeCard)}</div></>}
         {detail && <aside className={styles.detailPanel} aria-label="医院详情"><button type="button" onClick={() => setDetail(null)}>关闭详情</button><h3>{detail.name}</h3><p>{detail.introduction || '暂无医院简介公开摘要。'}</p><h4>相关科室</h4><p>{detail.departments.length ? detail.departments.join('、') : '暂无结构化科室信息。'}</p><h4>主要医生</h4><p>{detail.doctors.length ? detail.doctors.join('、') : '暂无可靠的公开医生信息。'}</p>{detail.registration_url && <a href={detail.registration_url} target="_blank" rel="noreferrer">前往官方挂号服务</a>}</aside>}
       </section>
 
@@ -206,11 +241,11 @@ export default function Page() {
             <label htmlFor="scope">排名范围<select id="scope" value={scope} onChange={(event) => setScope(event.target.value as RealtimeSearchResponse['scope'])}><option value="district">市区级</option><option value="city">市级</option><option value="province">省级</option><option value="national">全国</option></select></label>
           </div>
           <label className={styles.aiConsent} htmlFor="realtime-consent"><input id="realtime-consent" type="checkbox" checked={realtimeConsent} onChange={(event) => setRealtimeConsent(event.target.checked)} />允许 DeepSeek 整理就医方向（可选）</label>
-          <button type="submit" disabled={realtimeLoading}>{realtimeLoading ? '正在检索公开资料…' : '开始实时匹配'}</button>
+          <button type="submit" disabled={realtimeLoading || !realtimeConsent}>{realtimeLoading ? '正在检索公开资料…' : '开始实时匹配'}</button>
         </form>
         {realtimeError && <p className={styles.notice} role="alert">{realtimeError}</p>}
         {realtimeResponse && realtimeResponse.status !== 'OK' && <p className={styles.notice}>{realtimeResponse.status === 'SEARCH_UNAVAILABLE' ? '暂时无法连接公开资料搜索服务，请稍后重试。你的输入没有问题。' : realtimeResponse.status === 'NO_RESULTS' ? '暂未找到符合当前范围的医院资料，请扩大排名范围或补充症状描述。' : '当前描述可能需要急诊处理，请优先联系 120。'}</p>}
-        {realtimeResponse?.status === 'OK' && <div className={styles.cards} aria-label="实时医院排名">{realtimeResponse.results.map((hospital, index) => <article className={styles.card} key={hospital.id}><div className={styles.cardRank}>第 {index + 1} 名 <b>综合评分 {hospital.score}</b></div><h3>{hospital.name}</h3><dl className={styles.hospitalFacts}><div><dt>推荐科室</dt><dd>{realtimeResponse.directions.length ? realtimeResponse.directions.join('、') : '暂无公开科室资料'}</dd></div><div><dt>医院地址</dt><dd>{hospital.city || '暂无公开地址资料'}</dd></div></dl><button type="button" onClick={() => void openDetail(hospital.id)}>查看医院详情</button></article>)}</div>}
+        {realtimeResponse?.status === 'OK' && <div className={styles.cards} aria-label="实时医院排名">{realtimeResponse.results.map(renderRealtimeCard)}</div>}
         {detail && <aside className={styles.detailPanel} aria-label="医院详情"><button type="button" onClick={() => setDetail(null)}>关闭详情</button><h3>{detail.name}</h3><p>{detail.introduction || '暂无医院简介公开摘要。'}</p><h4>相关科室</h4><p>{detail.departments.length ? detail.departments.join('、') : '暂无结构化科室信息。'}</p><h4>主要医生</h4><p>{detail.doctors.length ? detail.doctors.join('、') : '暂无可靠的公开医生信息。'}</p>{detail.registration_url && <a href={detail.registration_url} target="_blank" rel="noreferrer">前往官方挂号服务</a>}</aside>}
       </section>
 

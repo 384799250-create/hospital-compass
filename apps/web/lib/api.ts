@@ -49,6 +49,10 @@ export type RealtimeHospitalResult = {
   department?: string;
   address?: string;
   reason?: string;
+  core_advantages?: string;
+  match_reason?: string;
+  evidence_status?: string;
+  score_breakdown?: Record<string, number>;
 };
 
 export type RealtimeSearchResponse = {
@@ -58,6 +62,8 @@ export type RealtimeSearchResponse = {
   results: RealtimeHospitalResult[];
   sources: string[];
   fetched_at: string | null;
+  fallback_scope?: 'district' | 'city' | 'province' | 'national' | null;
+  fallback_message?: string | null;
 };
 
 export type RealtimeHospitalDetail = {

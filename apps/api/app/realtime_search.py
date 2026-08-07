@@ -140,7 +140,7 @@ _GENERIC_HOSPITAL_NAME_MARKERS = (
     '医院大全', '医院排名', '医院排行榜', '最好的医院', '哪家医院',
     '正规医院', '综合医院', '按三级甲等医院', '科室现有医院',
     '卫生部以及医院', '名医汇', '排行榜', '全国排名', '库基于',
-    '为广大患者', '医生信息来自',
+    '为广大患者', '医生信息来自', '执业证', '医师资格', '医生门诊',
 )
 
 
@@ -270,6 +270,10 @@ def rank_candidates(
             'source_urls': [source['url'] for source in source_payload],
             'fetched_at': max(source['fetched_at'] for source in source_payload),
             'registration_url': candidate.registration_url,
+            'core_advantages': source.snippet or '暂无公开资料',
+            'match_reason': '；'.join(reasons) or '根据症状、科室和地理范围综合匹配。',
+            'evidence_status': '有公开资料' if source.snippet else '暂无公开资料',
+            'score_breakdown': dimensions,
         })
     return results
 
