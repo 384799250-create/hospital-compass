@@ -2,7 +2,7 @@
 
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 
-import { AIMatchResponse, MatchApiError, MatchResponse, aiMatchHospitals, matchHospitals } from '../lib/api';
+import { AIMatchResponse, MatchApiError, MatchResponse, RealtimeHospitalDetail, RealtimeSearchResponse, aiMatchHospitals, getRealtimeHospitalDetail, matchHospitals, realtimeSearchHospitals } from '../lib/api';
 import { addFavorite, clearProfile, getProfile, removeFavorite } from '../lib/local-profile';
 import styles from './page.module.css';
 
@@ -17,6 +17,16 @@ export default function Page() {
   const [showEmergency, setShowEmergency] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [realtimeQuery, setRealtimeQuery] = useState('');
+  const [province, setProvince] = useState('广东省');
+  const [realtimeCity, setRealtimeCity] = useState('深圳市');
+  const [district, setDistrict] = useState('南山区');
+  const [scope, setScope] = useState<RealtimeSearchResponse['scope']>('district');
+  const [realtimeConsent, setRealtimeConsent] = useState(true);
+  const [realtimeResponse, setRealtimeResponse] = useState<RealtimeSearchResponse | null>(null);
+  const [realtimeLoading, setRealtimeLoading] = useState(false);
+  const [realtimeError, setRealtimeError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<RealtimeHospitalDetail | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const acknowledgementRef = useRef<HTMLButtonElement>(null);
@@ -61,6 +71,37 @@ export default function Page() {
         : '暂时无法完成匹配，请稍后再试。');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function submitRealtime(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRealtimeError(null);
+    setRealtimeResponse(null);
+    setDetail(null);
+    setRealtimeLoading(true);
+    try {
+      const result = await realtimeSearchHospitals({
+        query: realtimeQuery,
+        location: { province, city: realtimeCity, district },
+        scope,
+        ai_consent: realtimeConsent,
+      });
+      setRealtimeResponse(result);
+    } catch (requestError) {
+      setRealtimeError(requestError instanceof MatchApiError && requestError.status === 503
+        ? '公开资料搜索暂时不可用，请稍后重试。'
+        : '实时搜索暂时失败，请检查服务是否已启动。');
+    } finally {
+      setRealtimeLoading(false);
+    }
+  }
+
+  async function openDetail(id: string) {
+    try {
+      setDetail(await getRealtimeHospitalDetail(id));
+    } catch {
+      setRealtimeError('详情已过期，请重新搜索。');
     }
   }
 
@@ -139,6 +180,27 @@ export default function Page() {
           <button ref={submitButtonRef} type="submit" disabled={loading}>{loading ? '匹配中…' : '开始匹配'}</button>
         </form>
         <div className={styles.quickTags}><span>常见就医方向：</span><button type="button" onClick={() => setQuery('冠心病')}>心血管疾病</button><button type="button" onClick={() => setQuery('儿童发热咳嗽')}>儿童发热咳嗽</button><button type="button" onClick={() => setQuery('肿瘤治疗')}>肿瘤治疗</button><button type="button" onClick={() => setQuery('关节疼痛')}>关节疼痛</button></div>
+      </section>
+
+      <section className={styles.search} aria-labelledby="realtime-title">
+        <div className={styles.panelHeading}><span>实时</span><h2 id="realtime-title">公开资料医院排名</h2></div>
+        <p>输入症状或疾病，检索公开资料并按综合评分返回前 10 家医院，默认按市区范围。</p>
+        <form onSubmit={submitRealtime} className={styles.form}>
+          <label htmlFor="realtime-query">实时症状或疾病</label>
+          <textarea id="realtime-query" value={realtimeQuery} onChange={(event) => setRealtimeQuery(event.target.value)} required maxLength={500} rows={3} placeholder="例如：持续胸痛、膝关节疼痛" />
+          <div className={styles.formGrid}>
+            <label htmlFor="province">省份<input id="province" value={province} onChange={(event) => setProvince(event.target.value)} required /></label>
+            <label htmlFor="realtime-city">城市<input id="realtime-city" value={realtimeCity} onChange={(event) => setRealtimeCity(event.target.value)} required /></label>
+            <label htmlFor="district">市区<input id="district" value={district} onChange={(event) => setDistrict(event.target.value)} required /></label>
+            <label htmlFor="scope">排名范围<select id="scope" value={scope} onChange={(event) => setScope(event.target.value as RealtimeSearchResponse['scope'])}><option value="district">市区级</option><option value="city">市级</option><option value="province">省级</option><option value="national">全国</option></select></label>
+          </div>
+          <label className={styles.aiConsent} htmlFor="realtime-consent"><input id="realtime-consent" type="checkbox" checked={realtimeConsent} onChange={(event) => setRealtimeConsent(event.target.checked)} />允许 DeepSeek 整理就医方向（可选）</label>
+          <button type="submit" disabled={realtimeLoading}>{realtimeLoading ? '正在检索公开资料…' : '开始实时匹配'}</button>
+        </form>
+        {realtimeError && <p className={styles.notice} role="alert">{realtimeError}</p>}
+        {realtimeResponse && realtimeResponse.status !== 'OK' && <p className={styles.notice}>当前搜索状态：{realtimeResponse.status}</p>}
+        {realtimeResponse?.status === 'OK' && <div className={styles.cards} aria-label="实时医院排名">{realtimeResponse.results.map((hospital, index) => <article className={styles.card} key={hospital.id}><p>第 {index + 1} 名 · 综合分 {hospital.score}</p><h3>{hospital.name}</h3><p>{hospital.city}</p><dl><div><dt>排名依据</dt><dd>{hospital.score_reasons.join('；')}</dd></div><div><dt>资料更新时间</dt><dd>{hospital.fetched_at}</dd></div></dl><button type="button" onClick={() => void openDetail(hospital.id)}>查看医院详情</button></article>)}</div>}
+        {detail && <aside className={styles.detailPanel} aria-label="医院详情"><button type="button" onClick={() => setDetail(null)}>关闭详情</button><h3>{detail.name}</h3><p>{detail.introduction || '暂无医院简介公开摘要。'}</p><h4>相关科室</h4><p>{detail.departments.length ? detail.departments.join('、') : '暂无结构化科室信息。'}</p><h4>主要医生</h4><p>{detail.doctors.length ? detail.doctors.join('、') : '暂无可靠的公开医生信息。'}</p>{detail.registration_url && <a href={detail.registration_url} target="_blank" rel="noreferrer">前往官方挂号服务</a>}</aside>}
       </section>
 
       <section className={styles.overview} aria-label="平台信息概览">

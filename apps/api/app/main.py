@@ -1,7 +1,7 @@
 import logging
 import csv
 from io import StringIO
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -31,6 +31,8 @@ PUBLIC_HOSPITALS = tuple(
     verified_row_to_hospital(row)
     for row in load_verified_beijing_rows(VERIFIED_BEIJING_PUBLISH_LIST_PATH, date.today())
 )
+REALTIME_DETAIL_SESSIONS: dict[str, tuple[datetime, dict[str, object]]] = {}
+REALTIME_DETAIL_TTL = timedelta(minutes=15)
 
 
 def current_date() -> date:
@@ -188,6 +190,19 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         }
     sources = list(dict.fromkeys(url for result in results for url in result['source_urls']))
     fetched_at = max(result['fetched_at'] for result in results)
+    now = datetime.now(UTC)
+    for result in results[:10]:
+        REALTIME_DETAIL_SESSIONS[str(result['id'])] = (now, {
+            'id': result['id'],
+            'name': result['name'],
+            'city': result['city'],
+            'introduction': next((source['snippet'] for source in result['sources'] if source['snippet']), None),
+            'departments': list(directions),
+            'doctors': [],
+            'registration_url': result['registration_url'],
+            'sources': result['sources'],
+            'fetched_at': result['fetched_at'],
+        })
     return {
         'status': 'OK',
         'directions': directions,
@@ -196,6 +211,18 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         'sources': sources,
         'fetched_at': fetched_at,
     }
+
+
+@app.get('/v1/realtime-hospitals/{hospital_id}')
+async def realtime_hospital_detail(hospital_id: str):
+    session = REALTIME_DETAIL_SESSIONS.get(hospital_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail='Realtime hospital result not found')
+    created_at, detail = session
+    if datetime.now(UTC) - created_at > REALTIME_DETAIL_TTL:
+        REALTIME_DETAIL_SESSIONS.pop(hospital_id, None)
+        raise HTTPException(status_code=404, detail='Realtime hospital result expired')
+    return detail
 
 
 @app.get('/v1/hospitals/{hospital_id}')

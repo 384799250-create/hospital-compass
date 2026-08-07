@@ -106,6 +106,26 @@ def test_realtime_search_with_no_documents_reports_no_results(client, monkeypatc
     assert response.json()['status'] == 'NO_RESULTS'
 
 
+def test_realtime_result_has_short_lived_detail_context(client, monkeypatch):
+    document = SearchDocument(
+        title='Shenzhen Heart Hospital', url='https://hospital.example.org',
+        snippet='Cardiology department introduction', fetched_at=datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location: HospitalCandidate(
+        name='Shenzhen Heart Hospital', city='Shenzhen', province='Guangdong', district='Nanshan',
+        sources=[document], specialties=('cardiology',),
+    ))
+    monkeypatch.setattr(main, 'BochaSearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, [document]),
+    })())
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+    result_id = response.json()['results'][0]['id']
+    detail = client.get(f'/v1/realtime-hospitals/{result_id}')
+    assert detail.status_code == 200
+    assert detail.json()['name'] == 'Shenzhen Heart Hospital'
+    assert detail.json()['sources'][0]['url'] == 'https://hospital.example.org'
+
+
 def test_blank_query_returns_invalid_request(client):
     response = client.post('/v1/matches', json={'query': ' ', 'priority': 'overall'})
 

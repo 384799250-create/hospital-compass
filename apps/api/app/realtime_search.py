@@ -243,6 +243,10 @@ def candidate_from_document(
     except Exception:
         return None
     metadata = document if isinstance(document, Mapping) else document.__dict__
+    explicit_location = any(metadata.get(key) for key in ('city', 'province', 'district'))
+    searchable_text = f'{title} {snippet} {url}'
+    if not explicit_location and not all(token in searchable_text for token in requested):
+        return None
     city = str(metadata.get('city') or requested[1]).strip()
     province = str(metadata.get('province') or requested[0]).strip()
     district = str(metadata.get('district') or requested[2]).strip()
