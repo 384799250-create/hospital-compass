@@ -186,6 +186,10 @@ export default function Page() {
           <button ref={submitButtonRef} type="submit" disabled={loading}>{loading ? '匹配中…' : '开始匹配'}</button>
         </form>
         <div className={styles.quickTags}><span>常见就医方向：</span><button type="button" onClick={() => setQuery('冠心病')}>心血管疾病</button><button type="button" onClick={() => setQuery('儿童发热咳嗽')}>儿童发热咳嗽</button><button type="button" onClick={() => setQuery('肿瘤治疗')}>肿瘤治疗</button><button type="button" onClick={() => setQuery('关节疼痛')}>关节疼痛</button></div>
+        {realtimeError && <p className={styles.notice} role="alert">{realtimeError}</p>}
+        {realtimeResponse && realtimeResponse.status !== 'OK' && <p className={styles.notice}>当前搜索状态：{realtimeResponse.status}</p>}
+        {realtimeResponse?.status === 'OK' && <div className={styles.cards} aria-label="实时医院排名">{realtimeResponse.results.map((hospital, index) => <article className={styles.card} key={hospital.id}><p>第 {index + 1} 名 · 综合分 {hospital.score}</p><h3>{hospital.name}</h3><p>{hospital.city}</p><dl><div><dt>排名依据</dt><dd>{hospital.score_reasons.join('；')}</dd></div><div><dt>资料更新时间</dt><dd>{hospital.fetched_at}</dd></div></dl><button type="button" onClick={() => void openDetail(hospital.id)}>查看医院详情</button></article>)}</div>}
+        {detail && <aside className={styles.detailPanel} aria-label="医院详情"><button type="button" onClick={() => setDetail(null)}>关闭详情</button><h3>{detail.name}</h3><p>{detail.introduction || '暂无医院简介公开摘要。'}</p><h4>相关科室</h4><p>{detail.departments.length ? detail.departments.join('、') : '暂无结构化科室信息。'}</p><h4>主要医生</h4><p>{detail.doctors.length ? detail.doctors.join('、') : '暂无可靠的公开医生信息。'}</p>{detail.registration_url && <a href={detail.registration_url} target="_blank" rel="noreferrer">前往官方挂号服务</a>}</aside>}
       </section>
 
       <section className={styles.search} aria-labelledby="realtime-title">
