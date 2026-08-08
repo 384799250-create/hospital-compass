@@ -1,5 +1,7 @@
 import logging
 import csv
+import os
+import json
 from io import StringIO
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -16,12 +18,21 @@ from app.data import verified_row_to_hospital
 from app.importer import load_verified_beijing_rows
 from app.importer import validate_import
 from app.schemas import AIMatchRequest, MatchRequest, RealtimeSearchRequest
-from app.bocha_search import BochaSearchClient
+from app.anysearch import AnySearchClient, prefer_search_result
 from app.realtime_search import candidate_from_document, merge_hospital_candidates, rank_candidates
 from app.web_ranker import synthesize_hospital_results
+from app.hospital_store import initialize as initialize_hospital_store
+from app.hospital_store import directory_rows
+from app.hospital_store import database_path
+from app.specialty_ranking_store import ranking_records
+from app.search_policy import HourlySearchBudget, SearchCache, compact_search_queries
+from app.disease_profiles import profile_for_query
+from app.bocha_search import BochaSearchClient, SearchDocument
+from app.realtime_search import HospitalCandidate
 
 logger = logging.getLogger(__name__)
 app = FastAPI()
+HOSPITAL_DIRECTORY_PATH = initialize_hospital_store()
 IMPORT_COLUMNS = (
     'id', 'name', 'city', 'tier', 'source_url', 'source_date',
     'specialties', 'disease_tags', 'verified', 'published',
@@ -33,6 +44,95 @@ PUBLIC_HOSPITALS = tuple(
     for row in load_verified_beijing_rows(VERIFIED_BEIJING_PUBLISH_LIST_PATH, date.today())
 )
 REALTIME_DETAIL_SESSIONS: dict[str, tuple[datetime, dict[str, object]]] = {}
+REALTIME_SEARCH_CACHE = SearchCache(ttl=timedelta(minutes=30))
+REALTIME_SEARCH_BUDGET = HourlySearchBudget(
+    limit=int(os.environ.get('BOCHA_MAX_CALLS_PER_HOUR', '60')),
+)
+
+
+def _directory_fallback_candidates(request: RealtimeSearchRequest) -> list[HospitalCandidate]:
+    province = request.location.province if request.scope != 'national' else ''
+    city = request.location.city if request.scope in {'city', 'district'} else ''
+    district = request.location.district if request.scope == 'district' else ''
+    rows = directory_rows(province=province, city=city, district=district)
+    candidates: list[HospitalCandidate] = []
+    for row in rows:
+        name = str(row.get('canonical_name') or '').strip()
+        address = str(row.get('address') or '').strip()
+        if not name or not address:
+            continue
+        try:
+            fetched_at = datetime.fromisoformat(str(row.get('source_updated_at') or row.get('updated_at') or '')).replace(tzinfo=UTC)
+        except ValueError:
+            fetched_at = datetime.now(UTC)
+        source = SearchDocument(
+            title=name,
+            url='https://y.dxy.cn/hospital/',
+            snippet=f'{address}；{row.get("tier") or ""}',
+            fetched_at=fetched_at,
+        )
+        try:
+            specialties = tuple(json.loads(str(row.get('specialties_json') or '[]')))
+        except (TypeError, json.JSONDecodeError):
+            specialties = ()
+        candidates.append(HospitalCandidate(
+            name=name,
+            city=str(row.get('city') or request.location.city),
+            address=address,
+            core_advantages='；'.join(filter(None, [str(row.get('tier') or '').strip(), '、'.join(specialties)])),
+            province=str(row.get('province') or request.location.province),
+            district=str(row.get('district') or request.location.district),
+            specialties=specialties,
+            sources=[source],
+            public_capability=78.0 if '三级甲等' in str(row.get('tier') or '') else 50.0,
+        ))
+    return candidates
+
+
+def _attach_ranking_evidence(candidates: list[HospitalCandidate], directions: list[str]) -> list[HospitalCandidate]:
+    """Attach stored authoritative evidence without changing candidate identity."""
+    enriched: list[HospitalCandidate] = []
+    for candidate in candidates:
+        rows = ranking_records(hospital=candidate.name, city=candidate.city, path=database_path())
+        if directions:
+            matched = [row for row in rows if any(direction in str(row.get('specialty') or '') or str(row.get('specialty') or '') in direction for direction in directions)]
+            rows = matched or rows
+        evidence = tuple({**row, 'score': float(max(0, 110 - int(row['rank']) * 10)) if row.get('rank') else 0.0} for row in rows[:5])
+        enriched.append(HospitalCandidate(**{**candidate.__dict__, 'ranking_evidence': evidence}))
+    return enriched
+
+
+async def _cached_external_search(
+    search_client: AnySearchClient,
+    query: str,
+    fallback_client: BochaSearchClient | None = None,
+):
+    cached = REALTIME_SEARCH_CACHE.get(query)
+    if cached is not None:
+        return cached
+    if not REALTIME_SEARCH_BUDGET.allow():
+        return None
+    result = await run_in_threadpool(search_client.search, query, 10)
+    REALTIME_SEARCH_BUDGET.record()
+    if result.available and result.documents:
+        REALTIME_SEARCH_CACHE.set(query, result)
+
+    # Bocha is an opt-in fallback: it is consulted only when AnySearch is
+    # unavailable or returned no documents, so normal requests make one call.
+    if result.available and result.documents:
+        return result
+    if fallback_client is None or not os.environ.get('BOCHA_API_KEY'):
+        return result
+    if not REALTIME_SEARCH_BUDGET.allow():
+        return result
+    fallback = await run_in_threadpool(fallback_client.search, query, 10)
+    REALTIME_SEARCH_BUDGET.record()
+    selected = prefer_search_result(result, fallback)
+    if selected.available and selected.documents:
+        REALTIME_SEARCH_CACHE.set(query, selected)
+    return selected
+
+
 REALTIME_DETAIL_TTL = timedelta(minutes=15)
 _WIDER_SCOPE = {'district': 'city', 'city': 'province', 'province': 'national'}
 
@@ -164,6 +264,7 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
     if local.emergency:
         return {
             'status': 'EMERGENCY',
+            'search_mode': '本地规则',
             'directions': [],
             'scope': request.scope,
             'results': [],
@@ -185,7 +286,18 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         )
         directions = list(dict.fromkeys(ai_response.directions or directions))
 
-    search_client = BochaSearchClient()
+    profile_key = profile_for_query(request.query).key
+
+    local_candidates = _attach_ranking_evidence(merge_hospital_candidates(_directory_fallback_candidates(request)), directions)
+    local_results = rank_candidates(
+        local_candidates,
+        directions=directions,
+        location=request.location,
+        scope=request.scope,
+        profile_key=profile_key,
+    )
+    search_client = AnySearchClient()
+    fallback_client = BochaSearchClient() if os.environ.get('BOCHA_API_KEY') else None
     place_term, specialty_term = _bocha_query_terms(request, directions)
     search_queries = [
         f'{place_term} {specialty_term} hospital official website',
@@ -196,14 +308,25 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         f'{request.location.city} {" ".join(directions)} 医院 官方',
         f'{request.location.city} 三甲 {" ".join(directions)} 医院',
         f'{request.location.city} 心脏中心 医院 官方',
+        f'{request.location.city} 省人民医院 {specialty_term} 官方',
+        f'{request.location.city} 市人民医院 {specialty_term} 官方',
+        f'{request.location.city} 国家区域医疗中心 {specialty_term}',
+        f'{request.location.city} {request.query} 医院 官方 挂号',
     ]
-    search_results = [
-        await run_in_threadpool(search_client.search, query, 10)
-        for query in dict.fromkeys(search_queries)
-    ]
-    if not any(result.available for result in search_results):
+    if len(local_results) >= 10:
+        search_queries = []
+    else:
+        place_term, specialty_term = _bocha_query_terms(request, directions)
+        search_queries = compact_search_queries(request.location.city or place_term, specialty_term, request.query)
+    search_results = []
+    for query in search_queries:
+        result = await _cached_external_search(search_client, query, fallback_client)
+        if result is not None:
+            search_results.append(result)
+    if search_results and not any(result.available for result in search_results) and not local_results:
         return {
             'status': 'SEARCH_UNAVAILABLE',
+            'search_mode': '本地资料',
             'directions': directions,
             'scope': request.scope,
             'results': [],
@@ -221,12 +344,16 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
             require_location_evidence=request.scope in {'district', 'city'},
         )) is not None
     ]
-    candidates = merge_hospital_candidates(candidates)
+    candidates = _attach_ranking_evidence(merge_hospital_candidates(candidates), directions)
+    if len(candidates) < 10:
+        candidates.extend(local_candidates)
+        candidates = merge_hospital_candidates(candidates)
     results = rank_candidates(
         candidates,
         directions=directions,
         location=request.location,
         scope=request.scope,
+        profile_key=profile_key,
     )
     synthesized = synthesize_hospital_results(
         query=request.query,
@@ -239,6 +366,7 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
     if not results:
         return {
             'status': 'NO_RESULTS',
+            'search_mode': '本地资料+联网补充',
             'directions': directions,
             'scope': request.scope,
             'results': [],
@@ -266,6 +394,7 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         })
     return {
         'status': 'OK',
+        'search_mode': '本地资料+联网补充' if search_results else '本地资料',
         'directions': directions,
         'scope': request.scope,
         'results': results[:10],
