@@ -15,15 +15,15 @@ def test_specialty_ranking_evidence_normalizes_identity_fields_and_keeps_provena
     assert evidence.city == 'Beijing'
     assert evidence.specialty == 'Cardiology'
     assert evidence.rank == 1
-    assert evidence.score == 10.0
+    assert evidence.score == 100.0
     assert evidence.year == 2025
     assert evidence.source == ' National specialty ranking / published edition '
     assert evidence.verification_status == '待核验'
 
 
 def test_rank_to_score_descends_by_rank_and_bottoms_out_at_zero():
-    assert rank_to_score(1) == 10.0
-    assert rank_to_score(10) == 1.0
+    assert rank_to_score(1) == 100.0
+    assert rank_to_score(10) == 10.0
     assert rank_to_score(11) == 0.0
 
 

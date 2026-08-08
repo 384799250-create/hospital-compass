@@ -9,7 +9,7 @@ def rank_to_score(rank: int | None) -> float:
         return 0.0
     if rank < 1:
         raise ValueError('rank must be greater than zero')
-    return float(max(0, 11 - rank))
+    return float(max(0, 110 - (rank * 10)))
 
 
 class SpecialtyRankingEvidence(BaseModel):
