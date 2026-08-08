@@ -7,6 +7,7 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from app.schemas import Location
+from app.disease_profiles import DiseaseProfile, PROFILES
 
 from app.bocha_search import SearchDocument
 
@@ -42,6 +43,30 @@ _HOSPITAL_CITY_HINTS = {
     '深圳市罗湖区人民医院': '深圳市',
 }
 
+# These are transparent priors used only when the public source does not
+# provide a structured capability score. Exact names cover well-known anchor
+# hospitals; the pattern scores keep the rule useful for newly discovered
+# hospitals without treating every "医院" result as equally strong.
+_HOSPITAL_STRENGTH_PATTERNS = (
+    (('\u56fd\u5bb6\u533b\u5b66\u4e2d\u5fc3', '\u56fd\u5bb6\u533b\u7597\u4e2d\u5fc3'), 98.0),
+    (('\u5927\u5b66\u9644\u5c5e\u7b2c\u4e00\u533b\u9662', '\u533b\u79d1\u5927\u5b66\u9644\u5c5e\u7b2c\u4e00\u533b\u9662'), 94.0),
+    (('\u7701\u4eba\u6c11\u533b\u9662', '\u81ea\u6cbb\u533a\u4eba\u6c11\u533b\u9662'), 92.0),
+    (('\u56fd\u5bb6\u533a\u57df\u533b\u7597\u4e2d\u5fc3', '\u7701\u7ea7\u533a\u57df\u533b\u7597\u4e2d\u5fc3'), 90.0),
+)
+'''
+_HOSPITAL_STRENGTH_HINTS = {
+    '广东省人民医院': 100.0,
+    '中山大学附属第一医院': 98.0,
+    '南方医科大学南方医院': 96.0,
+    '中山大学孙逸仙纪念医院': 94.0,
+    '中山大学附属第三医院': 92.0,
+    '广州医科大学附属第一医院': 90.0,
+    '广州医科大学附属第二医院': 88.0,
+    '暨南大学附属第一医院': 86.0,
+    '岭南医院': 68.0,
+}
+'''
+
 _AUTHORIZED_REGISTRATION_HOSTS = frozenset({
     '114yygh.com',
     'www.114yygh.com',
@@ -55,12 +80,15 @@ class HospitalCandidate:
     name: str
     city: str
     sources: list[SearchDocument] = field(default_factory=list)
+    address: str = ''
+    core_advantages: str = ''
     registration_url: str | None = None
     province: str | None = None
     district: str | None = None
     specialties: tuple[str, ...] = ()
     public_capability: float = 0.0
     completeness: float = 0.0
+    ranking_evidence: tuple[dict[str, object], ...] = ()
 
     @classmethod
     def from_document(
@@ -84,6 +112,8 @@ class HospitalCandidate:
             name=name.strip(),
             city=city.strip(),
             sources=[source],
+            address='',
+            core_advantages='',
             registration_url=registration_url,
         )
 
@@ -102,12 +132,30 @@ def is_registration_url(url: str, official_domains: frozenset[str] = frozenset()
 
 
 def merge_hospital_candidates(candidates: list[HospitalCandidate]) -> list[HospitalCandidate]:
-    """Merge hospital/city duplicates, keeping only each newest source record."""
+    """Merge hospital/city duplicates while retaining independent evidence."""
     merged: dict[tuple[str, str], HospitalCandidate] = {}
     for candidate in candidates:
         existing = merged.get(candidate.normalized_key)
-        if existing is None or _newest_source(candidate) >= _newest_source(existing):
+        if existing is None:
             merged[candidate.normalized_key] = candidate
+            continue
+        source_by_url = {source.url: source for source in existing.sources}
+        source_by_url.update({source.url: source for source in candidate.sources})
+        sources = sorted(source_by_url.values(), key=lambda source: source.fetched_at, reverse=True)[:5]
+        merged[candidate.normalized_key] = HospitalCandidate(
+            name=existing.name,
+            city=existing.city or candidate.city,
+            address=existing.address or candidate.address,
+            core_advantages=existing.core_advantages or candidate.core_advantages,
+            province=existing.province or candidate.province,
+            district=existing.district or candidate.district,
+            specialties=tuple(dict.fromkeys(existing.specialties + candidate.specialties)),
+            public_capability=max(existing.public_capability, candidate.public_capability),
+            completeness=max(existing.completeness, candidate.completeness),
+            sources=sources,
+            registration_url=existing.registration_url or candidate.registration_url,
+            ranking_evidence=existing.ranking_evidence or candidate.ranking_evidence,
+        )
     return list(merged.values())
 
 
@@ -190,6 +238,23 @@ RANKING_WEIGHTS = {
     'official_service': 10,
 }
 
+_SPECIALTY_ALIASES = {
+    '\u5fc3\u8840\u7ba1\u5185\u79d1': ('\u5fc3\u8840\u7ba1\u5185\u79d1', '\u5fc3\u5185\u79d1', '\u5fc3\u810f\u5185\u79d1', '\u5fc3\u8840\u7ba1\u79d1', 'cardiology'),
+    '\u547c\u5438\u5185\u79d1': ('\u547c\u5438\u5185\u79d1', '\u547c\u5438\u79d1', 'respiratory medicine', 'pulmonology'),
+    '\u795e\u7ecf\u5185\u79d1': ('\u795e\u7ecf\u5185\u79d1', '\u795e\u7ecf\u79d1', 'neurology'),
+    '\u6d88\u5316\u5185\u79d1': ('\u6d88\u5316\u5185\u79d1', '\u6d88\u5316\u79d1', 'gastroenterology'),
+    '\u9aa8\u79d1': ('\u9aa8\u79d1', '\u9aa8\u5916\u79d1', 'orthopedics'),
+    '\u773c\u79d1': ('\u773c\u79d1', 'ophthalmology'),
+}
+
+
+def _expanded_specialty_terms(value: str) -> tuple[str, ...]:
+    normalized = value.strip().casefold()
+    for canonical, aliases in _SPECIALTY_ALIASES.items():
+        if normalized == canonical.casefold() or normalized in {alias.casefold() for alias in aliases}:
+            return aliases
+    return (value,)
+
 
 def rank_candidates(
     candidates: Sequence[HospitalCandidate],
@@ -197,10 +262,12 @@ def rank_candidates(
     directions: Sequence[str],
     location: Location | Mapping[str, str] | LocationParts,
     scope: Scope,
+    profile_key: str = 'general',
     as_of: datetime | None = None,
 ) -> list[dict[str, object]]:
     """Filter and rank provider candidates without inventing missing records."""
     requested = parse_location(location)
+    profile = next((item for item in PROFILES if item.key == profile_key), None)
     now = as_of or datetime.now(UTC)
     eligible = []
     for candidate in candidates:
@@ -219,17 +286,19 @@ def rank_candidates(
             fetched_at = fetched_at.replace(tzinfo=UTC)
         age_days = max(0.0, (now - fetched_at).total_seconds() / 86400)
         freshness = max(0.0, 100.0 - age_days * 100.0 / 180.0)
-        specialty = 100.0 if directions and any(
-            direction.casefold() in ' '.join(candidate.specialties).casefold()
-            or direction.casefold() in (candidate.name + ' ' + source.title + ' ' + source.snippet).casefold()
-            for direction in directions
-        ) else 0.0
-        capability = candidate.public_capability or _capability_score(source)
-        geography = 100.0 if scope == 'national' or (
-            candidate_location[0] == requested[0]
-            and (scope == 'province' or candidate_location[1] == requested[1])
-            and (scope in {'province', 'city'} or candidate_location[2] == requested[2])
-        ) else 0.0
+        specialty = _specialty_strength_score(candidate, source, directions, profile)
+        ranking_score = max((float(item.get('score') or 0) for item in candidate.ranking_evidence), default=0.0)
+        if ranking_score:
+            specialty = max(specialty, ranking_score)
+        capability = max(candidate.public_capability, _capability_score(source, candidate.name, profile))
+        if scope == 'national':
+            geography = 60.0
+        elif scope == 'province':
+            geography = 75.0 if candidate_location[0] == requested[0] else 0.0
+        elif scope == 'city':
+            geography = 100.0 if candidate_location[:2] == requested[:2] else 0.0
+        else:
+            geography = 100.0 if candidate_location == requested else 0.0
         completeness = candidate.completeness or _completeness_score(candidate, source)
         freshness_completeness = (freshness + completeness) / 2
         official_service = 100.0 if candidate.registration_url else 0.0
@@ -246,10 +315,10 @@ def rank_candidates(
             for key, value in dimensions.items()
             if value > 0
         ]
-        eligible.append((score, fetched_at, completeness, candidate.name, candidate, reasons))
+        eligible.append((score, fetched_at, completeness, candidate.name, candidate, reasons, dimensions))
     eligible.sort(key=lambda item: (-item[0], -item[1].timestamp(), -item[2], item[3].casefold()))
     results = []
-    for score, _, _, _, candidate, reasons in eligible[:10]:
+    for score, _, _, _, candidate, reasons, dimensions in eligible[:10]:
         source_payload = [
             {
                 'title': source.title,
@@ -270,10 +339,14 @@ def rank_candidates(
             'source_urls': [source['url'] for source in source_payload],
             'fetched_at': max(source['fetched_at'] for source in source_payload),
             'registration_url': candidate.registration_url,
+            'address': candidate.address,
+            'core_advantages': candidate.core_advantages or source.snippet,
             'core_advantages': source.snippet or '暂无公开资料',
             'match_reason': '；'.join(reasons) or '根据症状、科室和地理范围综合匹配。',
             'evidence_status': '有公开资料' if source.snippet else '暂无公开资料',
             'score_breakdown': dimensions,
+            'core_advantages': candidate.core_advantages or source.snippet,
+            'specialty_evidence': list(candidate.ranking_evidence),
         })
     return results
 
@@ -302,6 +375,11 @@ def candidate_from_document(
     metadata = document if isinstance(document, Mapping) else document.__dict__
     explicit_location = any(metadata.get(key) for key in ('city', 'province', 'district'))
     searchable_text = f'{title} {snippet} {url}'
+    if any(marker in searchable_text.casefold() for marker in (
+        '执业证', '医师资格', '医生门诊', '本站已通过实名认证',
+        '医生个人主页', '医生介绍',
+    )):
+        return None
     location_tokens = []
     for part in requested[:2]:
         location_tokens.extend(_LOCATION_ALIASES.get(part, (part,)))
@@ -325,7 +403,12 @@ def candidate_from_document(
         specialties = (specialties,)
     # Search snippets often contain the actual provider name while the title
     # is a generic ranking or department page heading.
-    hospital_name = _hospital_name_from_title(f'{title} {snippet}')
+    hospital_name = _hospital_name_from_title(title)
+    # If the title is a generic search/ranking heading, use the snippet to
+    # recover the provider entity. Do not let a trailing phrase such as
+    # "心血管内科医院" replace the actual hospital named in the title.
+    if hospital_name == title or '医院' not in hospital_name:
+        hospital_name = _hospital_name_from_title(f'{title} {snippet}')
     if '院区' in hospital_name and '(' in hospital_name:
         hospital_name = hospital_name.rsplit('(', 1)[-1].strip(' )）')
     if '院区' in hospital_name and '（' in hospital_name:
@@ -352,9 +435,62 @@ def candidate_from_document(
     )
 
 
-def _capability_score(source: SearchDocument) -> float:
-    text = f'{source.title} {source.snippet}'.casefold()
-    return 100.0 if any(token in text for token in ('public', '公立', '三级', '三甲', '医保', '卫健')) else 50.0
+def _capability_score(source: SearchDocument, hospital_name: str = '', profile: DiseaseProfile | None = None) -> float:
+    """Estimate institutional strength from explicit public evidence.
+
+    Name priors are deliberately applied before generic markers so a major
+    public hospital is not tied with an otherwise unqualified local listing.
+    """
+    text = f'{hospital_name} {source.title} {source.snippet}'.casefold()
+    if profile and any(term.casefold() in text for term in profile.ranking_terms):
+        return 92.0
+    for patterns, score in _HOSPITAL_STRENGTH_PATTERNS:
+        if any(token.casefold() in text for token in patterns):
+            return score
+    if any(token in text for token in ('国家医学中心', '国家区域医疗中心', '国家临床重点专科')):
+        return 96.0
+    if any(token in text for token in ('省级区域医疗中心', '省重点专科', '省级重点专科')):
+        return 86.0
+    if any(token in text for token in ('三甲', '三级甲等', '公立', 'public', '卫健委直属')):
+        return 78.0
+    if any(token in text for token in ('医保', '综合医院', '专科医院')):
+        return 62.0
+    return 50.0
+
+
+def _specialty_strength_score(
+    candidate: HospitalCandidate,
+    source: SearchDocument,
+    directions: Sequence[str],
+    profile: DiseaseProfile | None = None,
+) -> float:
+    """Score the strength of specialty evidence instead of keyword presence."""
+    text = f'{candidate.name} {source.title} {source.snippet}'.casefold()
+    requested = [
+        term.casefold()
+        for direction in directions if direction.strip()
+        for term in _expanded_specialty_terms(direction)
+    ]
+    specialty_text = ' '.join(candidate.specialties).casefold()
+    profile_terms = [term.casefold() for term in (profile.ranking_terms if profile else ())]
+    if profile_terms and any(term in text or term in specialty_text for term in profile_terms):
+        return 96.0
+    if not requested or not any(direction in text or direction in specialty_text for direction in requested):
+        return 0.0
+    if any(token in text for token in (
+        '国家临床重点专科', '国家区域医疗中心', '国家医学中心',
+        '国家重点专科',
+    )) or ('国家' in text and '区域医疗中心' in text):
+        return 100.0
+    if any(token in text for token in ('省级区域医疗中心', '省重点专科', '省级重点专科', '重点学科')):
+        return 90.0
+    if any(token in text for token in ('专病中心', '诊疗中心', '医学中心', '特色专科')):
+        return 82.0
+    if any(direction in specialty_text for direction in requested):
+        return 76.0
+    if any(token in source.title.casefold() for token in ('科', 'center', 'centre', 'department')):
+        return 68.0
+    return 58.0
 
 
 def _numeric(value: object) -> float:
@@ -365,5 +501,15 @@ def _numeric(value: object) -> float:
 
 
 def _completeness_score(candidate: HospitalCandidate, source: SearchDocument) -> float:
-    fields = (candidate.name, candidate.city, source.title, source.url, source.snippet)
-    return sum(bool(str(value).strip()) for value in fields) * 20.0
+    fields = (
+        candidate.name,
+        candidate.city,
+        candidate.address,
+        candidate.specialties,
+        source.title,
+        source.url,
+        source.snippet,
+        candidate.registration_url,
+    )
+    present = sum(bool(value) for value in fields)
+    return min(100.0, present / len(fields) * 100.0)
