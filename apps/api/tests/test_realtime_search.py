@@ -4,7 +4,7 @@ from pydantic import ValidationError
 
 from app.schemas import RealtimeSearchRequest
 from app.bocha_search import SearchDocument
-from app.realtime_search import HospitalCandidate, candidate_from_document, parse_location, rank_candidates, scope_matches
+from app.realtime_search import HospitalCandidate, candidate_from_document, normalize_hospital_name, parse_location, rank_candidates, scope_matches
 
 
 def request(**overrides):
@@ -369,6 +369,11 @@ def test_rank_result_keeps_grounded_address_and_core_advantages_separate():
 
     assert ranked[0]['address'] == '\u5e7f\u4e1c\u7701\u5e7f\u5dde\u5e02\u4e2d\u5c71\u4e8c\u8def106\u53f7'
     assert ranked[0]['core_advantages'] == '\u4e09\u7ea7\u7532\u7b49\uff1b\u5fc3\u5185\u79d1'
+
+
+def test_hospital_name_normalization_handles_common_campus_suffixes():
+    assert normalize_hospital_name('广东省人民医院（总院）') == '广东省人民医院'
+    assert normalize_hospital_name('广东省人民医院 院本部') == '广东省人民医院'
 
 
 def test_disease_profile_changes_specialty_evidence_without_changing_weights():

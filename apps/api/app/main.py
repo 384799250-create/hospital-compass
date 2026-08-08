@@ -19,7 +19,7 @@ from app.importer import load_verified_beijing_rows
 from app.importer import validate_import
 from app.schemas import AIMatchRequest, MatchRequest, RealtimeSearchRequest
 from app.anysearch import AnySearchClient, prefer_search_result
-from app.realtime_search import candidate_from_document, merge_hospital_candidates, rank_candidates
+from app.realtime_search import candidate_from_document, merge_hospital_candidates, normalize_hospital_name, rank_candidates
 from app.web_ranker import synthesize_hospital_results
 from app.hospital_store import initialize as initialize_hospital_store
 from app.hospital_store import directory_rows
@@ -93,7 +93,12 @@ def _attach_ranking_evidence(candidates: list[HospitalCandidate], directions: li
     """Attach stored authoritative evidence without changing candidate identity."""
     enriched: list[HospitalCandidate] = []
     for candidate in candidates:
-        rows = ranking_records(hospital=candidate.name, city=candidate.city, path=database_path())
+        names = tuple(dict.fromkeys((candidate.name, normalize_hospital_name(candidate.name))))
+        rows = []
+        for name in names:
+            rows.extend(ranking_records(hospital=name, path=database_path()))
+        city_rows = [row for row in rows if row.get('city') in {candidate.city, '全国'}]
+        rows = city_rows or rows
         if directions:
             matched = [row for row in rows if any(direction in str(row.get('specialty') or '') or str(row.get('specialty') or '') in direction for direction in directions)]
             rows = matched or rows
@@ -314,7 +319,9 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         f'{request.location.city} {request.query} 医院 官方 挂号',
     ]
     if len(local_results) >= 10:
-        search_queries = []
+        # Local coverage is not proof that recall is complete. Keep one
+        # low-cost web recall query to discover newer or omitted hospitals.
+        search_queries = (f'{place_term} {specialty_term} hospital official website',)
     else:
         place_term, specialty_term = _bocha_query_terms(request, directions)
         search_queries = compact_search_queries(request.location.city or place_term, specialty_term, request.query)

@@ -119,7 +119,7 @@ class HospitalCandidate:
 
     @property
     def normalized_key(self) -> tuple[str, str]:
-        return _normalize(self.name), _normalize(self.city)
+        return _normalize(normalize_hospital_name(self.name)), _normalize(self.city)
 
 
 def is_registration_url(url: str, official_domains: frozenset[str] = frozenset()) -> bool:
@@ -167,6 +167,15 @@ def _newest_source(candidate: HospitalCandidate) -> datetime:
 
 def _normalize(value: str) -> str:
     return ''.join(value.casefold().split())
+
+
+def normalize_hospital_name(value: str) -> str:
+    """Normalize harmless campus suffixes without merging distinct hospitals."""
+    name = ' '.join(value.split()).strip()
+    for suffix in ('（院本部）', '(院本部)', '（总院）', '(总院)', '院本部', '总院'):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)].strip()
+    return name
 
 
 def _hospital_name_from_title(title: str) -> str:
