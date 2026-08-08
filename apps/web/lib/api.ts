@@ -53,6 +53,7 @@ export type RealtimeHospitalResult = {
   match_reason?: string;
   evidence_status?: string;
   score_breakdown?: Record<string, number>;
+  specialty_evidence?: Array<{ hospital: string; city: string; specialty: string; rank?: number | null; tier?: string; year: number; source: string; verification_status: string }>;
 };
 
 export type RealtimeSearchResponse = {

@@ -66,6 +66,11 @@
 .card h3 { margin:0 0 5px; font-size:18px; }
 .cardRank { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; color:#5b756f; font-size:12px; font-weight:800; letter-spacing:.02em; }
 .cardRank b { color:#0d6b63; font-size:12px; font-weight:850; white-space:nowrap; }
+.specialtyEvidence { margin: 12px 0; padding: 10px 12px; border-left: 3px solid #0d6b63; background: #edf6f3; font-size: 12px; }
+.specialtyEvidence strong { display:block; margin-bottom:6px; color:#0d6b63; }
+.specialtyEvidence div { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:5px; }
+.specialtyEvidence a { color:#0d6b63; font-weight:700; }
+.specialtyEvidence small { color:#8a5a17; }
 .hospitalFacts { display:grid; grid-template-columns:minmax(0,.72fr) minmax(0,1.28fr); gap:12px 22px; margin:16px 0 0; padding-top:14px; border-top:1px solid #e0ebe8; }
 .hospitalFacts dt { color:#6a817c; font-size:11px; font-weight:800; letter-spacing:.06em; }
 .hospitalFacts dd { margin:4px 0 0; color:#234d48; font-size:13px; line-height:1.55; overflow-wrap:anywhere; }

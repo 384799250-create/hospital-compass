@@ -11,6 +11,29 @@ import areaData from '../data/area.json';
 
 const FALLBACK_COPY = '匹配服务暂时不可用。请查询当地卫生健康部门地址与医院官方站点；如情况紧急，请立即急诊或拨打 120。';
 
+const SCORE_LABELS: Record<string, string> = {
+  specialty: '专科实力',
+  hospital_strength: '医院综合实力',
+  public_capability: '医院综合实力',
+  geography: '地理位置',
+  completeness: '资料完整度',
+  freshness_completeness: '资料时效与完整度',
+  accessibility: '就医便利性',
+  official_service: '官方服务信息',
+};
+
+function formatScoreText(value: string) {
+  return value
+    .replace(/specialty/g, '专科实力')
+    .replace(/hospital_strength|public_capability/g, '医院综合实力')
+    .replace(/geography/g, '地理位置')
+    .replace(/freshness_completeness/g, '资料时效与完整度')
+    .replace(/completeness/g, '资料完整度')
+    .replace(/accessibility/g, '就医便利性')
+    .replace(/official_service/g, '官方服务信息')
+    .replace(/\(weight\s*\d+\)/g, '');
+}
+
 const LEGACY_LOCATION_TREE: Record<string, Record<string, string[]>> = {
   '广东省': { '广州市': ['越秀区', '天河区', '海珠区', '番禺区', '白云区'], '深圳市': ['南山区', '福田区', '罗湖区', '宝安区', '龙岗区'], '佛山市': ['禅城区', '南海区', '顺德区'], '东莞市': ['莞城区', '南城区', '东城区'] },
   '北京市': { '北京市': ['东城区', '西城区', '朝阳区', '海淀区', '丰台区'] },
@@ -152,6 +175,10 @@ export default function Page() {
 
   async function submitRealtime(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!realtimeConsent) {
+      setRealtimeError('请先勾选“同意使用智能体”后再开始匹配。');
+      return;
+    }
     await searchRealtime(scope);
   }
 
@@ -264,14 +291,22 @@ export default function Page() {
         <h3>{hospital.name}</h3>
         <dl className={styles.hospitalFacts}>
           <div><dt>核心优势</dt><dd>{hospital.core_advantages || '暂无公开资料'}</dd></div>
-          <div><dt>匹配理由</dt><dd>{hospital.match_reason || '根据症状、科室和地理范围综合匹配。'}</dd></div>
+          <div><dt>匹配理由</dt><dd>{formatScoreText(hospital.match_reason || '根据症状、科室和地理范围综合匹配。')}</dd></div>
           <div><dt>推荐科室</dt><dd>{realtimeResponse?.directions.length ? realtimeResponse.directions.join('、') : '暂无公开科室资料'}</dd></div>
           <div><dt>医院地址</dt><dd>{hospital.address || hospital.city || '暂无公开地址资料'}</dd></div>
         </dl>
+        {hospital.specialty_evidence?.length ? <div className={styles.specialtyEvidence}>
+          <strong>权威专科依据</strong>
+          {hospital.specialty_evidence.slice(0, 2).map((evidence) => <div key={`${evidence.source}-${evidence.year}`}>
+            <span>{evidence.specialty} · {evidence.year}年{evidence.rank ? `第${evidence.rank}名` : (evidence.tier || '公开资质')}</span>
+            <a href={evidence.source} target="_blank" rel="noreferrer">查看来源</a>
+            <small>{evidence.verification_status}</small>
+          </div>)}
+        </div> : null}
         <details className={styles.scoreDetails}>
           <summary>评分详情</summary>
           <dl>
-            {Object.entries(breakdown).map(([key, value]) => <div key={key}><dt>{({ specialty: '专科匹配度', hospital_strength: '医院专科实力', geography: '地理位置', completeness: '资料完整度', accessibility: '就医便利性' } as Record<string, string>)[key] || key}</dt><dd>{value}</dd></div>)}
+            {Object.entries(breakdown).map(([key, value]) => <div key={key}><dt>{SCORE_LABELS[key] || '综合评分'}</dt><dd>{Number(value).toFixed(1)}</dd></div>)}
           </dl>
           <p className={styles.evidenceStatus}>{hospital.evidence_status || '暂无公开资料'}</p>
           {hospital.source_urls?.length ? <div className={styles.sourceLinks}>{hospital.source_urls.slice(0, 3).map((url) => <a key={url} href={url} target="_blank" rel="noreferrer">查看资料来源</a>)}</div> : null}
@@ -317,10 +352,10 @@ export default function Page() {
           <label htmlFor="priority">匹配偏好</label>
           <select className={styles.priority} id="priority" name="priority" value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}><option value="overall">综合信息</option><option value="specialty">专科方向</option><option value="convenience">就近便利</option></select>
           <div className={styles.aiConsent}>
-            <label htmlFor="ai-consent"><input id="ai-consent" type="checkbox" checked={aiConsent} onChange={(event) => setAiConsent(event.target.checked)} />同意将本次描述发送给 DeepSeek 进行就医方向整理</label>
-            <p>AI 仅整理就医方向，不提供诊断或治疗建议。</p>
+            <label htmlFor="ai-consent"><input id="ai-consent" type="checkbox" checked={realtimeConsent} onChange={(event) => setRealtimeConsent(event.target.checked)} />同意使用智能体整理本次就医方向</label>
+            <p>智能体仅整理就医方向，不提供诊断或治疗建议。</p>
           </div>
-          {!realtimeConsent && <p className={styles.consentRequired} role="alert">请先同意使用 DeepSeek 进行就医方向整理。</p>}
+          {!realtimeConsent && <p className={styles.consentRequired} role="alert">请先勾选“同意使用智能体”后再开始匹配。</p>}
           <button ref={submitButtonRef} type="submit" disabled={realtimeLoading || !realtimeConsent}>{realtimeLoading && <span className={styles.buttonSpinner} aria-hidden="true" />}{realtimeLoading ? '正在匹配…' : '开始匹配'}</button>
         </form>
         <div className={styles.quickTags}><span>常见就医方向：</span><button type="button" onClick={() => setQuery('冠心病')}>心血管疾病</button><button type="button" onClick={() => setQuery('儿童发热咳嗽')}>儿童发热咳嗽</button><button type="button" onClick={() => setQuery('肿瘤治疗')}>肿瘤治疗</button><button type="button" onClick={() => setQuery('关节疼痛')}>关节疼痛</button></div>
@@ -343,7 +378,7 @@ export default function Page() {
             <label htmlFor="district">市区<input id="district" value={district} onChange={(event) => setDistrict(event.target.value)} required /></label>
             <label htmlFor="scope">排名范围<select id="scope" value={scope} onChange={(event) => setScope(event.target.value as RealtimeSearchResponse['scope'])}><option value="district">市区级</option><option value="city">市级</option><option value="province">省级</option><option value="national">全国</option></select></label>
           </div>
-          <label className={styles.aiConsent} htmlFor="realtime-consent"><input id="realtime-consent" type="checkbox" checked={realtimeConsent} onChange={(event) => setRealtimeConsent(event.target.checked)} />允许 DeepSeek 整理就医方向（可选）</label>
+          <label className={styles.aiConsent} htmlFor="realtime-consent"><input id="realtime-consent" type="checkbox" checked={realtimeConsent} onChange={(event) => setRealtimeConsent(event.target.checked)} />同意使用智能体整理本次就医方向</label>
           <button type="submit" disabled={realtimeLoading || !realtimeConsent}>{realtimeLoading ? '正在检索公开资料…' : '开始实时匹配'}</button>
         </form>
         {realtimeError && <p className={styles.notice} role="alert">{realtimeError}</p>}

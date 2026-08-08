@@ -441,4 +441,4 @@ def test_rank_result_exposes_authoritative_specialty_evidence_and_uses_its_score
     )
     ranked = rank_candidates([candidate], directions=['心血管内科'], location={'province': '广东省', 'city': '广州市', 'district': '天河区'}, scope='district')
     assert ranked[0]['specialty_evidence'][0]['year'] == 2025
-    assert ranked[0]['score_breakdown']['specialty'] == 100.0
+    assert 50.0 < ranked[0]['score_breakdown']['specialty'] < 100.0

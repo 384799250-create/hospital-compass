@@ -289,7 +289,9 @@ def rank_candidates(
         specialty = _specialty_strength_score(candidate, source, directions, profile)
         ranking_score = max((float(item.get('score') or 0) for item in candidate.ranking_evidence), default=0.0)
         if ranking_score:
-            specialty = max(specialty, ranking_score)
+            # The authoritative ranking supplies 50% of specialty strength;
+            # live and official evidence remain the other 50%.
+            specialty = round(ranking_score * 0.5 + specialty * 0.5, 4)
         capability = max(candidate.public_capability, _capability_score(source, candidate.name, profile))
         if scope == 'national':
             geography = 60.0

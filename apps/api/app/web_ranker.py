@@ -24,6 +24,7 @@ class SynthesizedHospital(BaseModel):
     match_reason: str | None = Field(default=None, max_length=300)
     evidence_status: str | None = Field(default=None, max_length=80)
     score_breakdown: dict[str, float] = Field(default_factory=dict)
+    specialty_evidence: list[dict[str, object]] = Field(default_factory=list)
 
 
 class SynthesisPayload(BaseModel):
@@ -47,6 +48,8 @@ SYSTEM_PROMPT = (
     'core_advantages, match_reason, evidence_status, and score_breakdown. '
     'Write core_advantages and match_reason in concise Chinese. '
     'score_breakdown keys must be specialty, hospital_strength, geography, completeness, accessibility. '
+    'Treat each candidate score and score_breakdown as a deterministic baseline. '
+    'Do not place a generic local hospital above a hospital with explicit national or provincial medical-center evidence unless the sources clearly show stronger specialty evidence. '
     'Use 暂无公开资料 when a fact is unavailable.'
 )
 
@@ -70,8 +73,12 @@ def synthesize_hospital_results(
             'id': item.get('id'),
             'name': item.get('name'),
             'city': item.get('city'),
+            'address': item.get('address'),
+            'core_advantages': item.get('core_advantages'),
             'score': item.get('score'),
+            'score_breakdown': item.get('score_breakdown', {}),
             'sources': item.get('sources', []),
+            'specialty_evidence': item.get('specialty_evidence', []),
         }
         for item in results[:20]
     ]
@@ -111,21 +118,31 @@ def synthesize_hospital_results(
 
     by_id = {str(item.get('id')): dict(item) for item in results}
     synthesized = []
+    synthesized_ids: set[str] = set()
     for item in parsed.results:
         base = by_id.get(item.id)
         if base is None:
             continue
         base['name'] = item.name
-        base['score'] = round(item.score, 2)
+        base['score'] = round(float(base.get('score') or item.score), 2)
         base['score_reasons'] = [item.reason] if item.reason else base.get('score_reasons', [])
         base['department'] = item.department or ''
-        base['address'] = item.address or base.get('city', '')
-        base['core_advantages'] = item.core_advantages or next(
+        base['address'] = str(base.get('address') or '')
+        base['core_advantages'] = base.get('core_advantages') or next(
             (source.get('snippet') for source in base.get('sources', []) if source.get('snippet')),
             '暂无公开资料',
         )
         base['match_reason'] = item.match_reason or item.reason or '根据症状、科室和地理范围综合匹配。'
         base['evidence_status'] = item.evidence_status or ('有公开资料' if base.get('sources') else '暂无公开资料')
-        base['score_breakdown'] = item.score_breakdown
+        base['score_breakdown'] = base.get('score_breakdown') or item.score_breakdown
+        base['specialty_evidence'] = base.get('specialty_evidence') or item.specialty_evidence
         synthesized.append(base)
+        synthesized_ids.add(item.id)
+    # DeepSeek may omit valid candidates because of response-length limits.
+    # Keep the deterministic local candidates after the AI-ranked entries so
+    # search recall is never reduced by the synthesis step.
+    for base in results:
+        candidate_id = str(base.get('id'))
+        if candidate_id not in synthesized_ids:
+            synthesized.append(dict(base))
     return synthesized[:10] or None
