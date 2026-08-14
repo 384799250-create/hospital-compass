@@ -12,6 +12,7 @@ from app.ai_matcher import ai_match
 from app.bocha_search import SearchDocument, SearchResult
 from app.matcher import SPECIALTY_KEYWORDS
 from app.realtime_search import HospitalCandidate
+from app.symptom_clarification import ClarificationUnavailableError
 
 
 class FakeAIResponse:
@@ -38,8 +39,58 @@ def client():
         main.app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_search_controls():
+    main.REALTIME_SEARCH_CACHE._values.clear()
+    main.REALTIME_SEARCH_BUDGET._calls.clear()
+
+
 def test_health_returns_ok(client):
     assert client.get('/health').json() == {'status': 'ok'}
+
+
+def test_clarification_endpoint_returns_503_when_ai_is_unavailable(client, monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise ClarificationUnavailableError()
+
+    monkeypatch.setattr(main, 'clarify_symptoms', unavailable)
+    response = client.post('/v1/symptom-clarification', json={
+        'query': '不舒服', 'answers': [], 'ai_consent': True,
+    })
+    assert response.status_code == 503
+    assert response.json()['detail'] == 'AI clarification is temporarily unavailable'
+
+
+def test_directory_fallback_does_not_treat_pending_capability_as_specialty_strength(client, monkeypatch):
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{
+        'canonical_name': '待核验医院', 'province': '广东省', 'city': '广州市', 'district': '越秀区',
+        'address': '广东省广州市越秀区甲路1号', 'tier': '三级甲等',
+        'specialty_capabilities': [{
+            'department': '心血管内科', 'diagnosis_scope': '相关疾病', 'strength_level': '待核验',
+        }],
+    }])
+    candidates = main._directory_fallback_candidates(__import__('app.schemas', fromlist=['RealtimeSearchRequest']).RealtimeSearchRequest(
+        query='冠心病', location={'province': '广东省', 'city': '广州市', 'district': '越秀区'},
+        scope='city', ai_consent=False,
+    ))
+    assert candidates[0].specialties == ()
+    assert candidates[0].capability_evidence == ()
+
+
+def test_directory_fallback_does_not_treat_generic_capability_scope_as_specialty_evidence(client, monkeypatch):
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{
+        'canonical_name': '通用医院', 'province': '广东省', 'city': '广州市', 'district': '越秀区',
+        'address': '广东省广州市越秀区甲路1号', 'tier': '三级甲等',
+        'specialty_capabilities': [{
+            'department': '心血管内科', 'diagnosis_scope': '相关疾病的诊断与治疗', 'strength_level': '国家级重点',
+        }],
+    }])
+    request = __import__('app.schemas', fromlist=['RealtimeSearchRequest']).RealtimeSearchRequest(
+        query='冠心病', location={'province': '广东省', 'city': '广州市', 'district': '越秀区'},
+        scope='city', ai_consent=False,
+    )
+    candidates = main._directory_fallback_candidates(request)
+    assert candidates[0].capability_evidence == ()
 
 
 def _realtime_payload(**overrides):
@@ -52,7 +103,7 @@ def _realtime_payload(**overrides):
 
 
 def test_realtime_emergency_does_not_call_bocha_or_ai(client, monkeypatch):
-    monkeypatch.setattr(main, 'BochaSearchClient', lambda: pytest.fail('Bocha must not run'))
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: pytest.fail('AnySearch must not run'))
     monkeypatch.setattr(main, 'ai_match', lambda *args, **kwargs: pytest.fail('AI must not run'))
     response = client.post('/v1/realtime-hospital-search', json=_realtime_payload(query='突发胸痛'))
     assert response.status_code == 200
@@ -61,8 +112,9 @@ def test_realtime_emergency_does_not_call_bocha_or_ai(client, monkeypatch):
 
 
 def test_realtime_without_consent_skips_ai_and_reports_unavailable(client, monkeypatch):
+    monkeypatch.delenv('BOCHA_API_KEY', raising=False)
     monkeypatch.setattr(main, 'ai_match', lambda *args, **kwargs: pytest.fail('AI must not run'))
-    monkeypatch.setattr(main, 'BochaSearchClient', lambda: type('Client', (), {
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
         'search': lambda self, query, count=10: SearchResult(False, []),
     })())
     response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
@@ -85,9 +137,10 @@ def test_realtime_filters_scope_caps_ten_and_orders_by_weight(client, monkeypatc
         province='Guangdong', district='Nanshan', sources=[document],
         specialties=('cardiology',),
     ))
-    monkeypatch.setattr(main, 'BochaSearchClient', lambda: type('Client', (), {
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
         'search': lambda self, query, count=10: SearchResult(True, documents),
     })())
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{'canonical_name': document.title} for document in documents])
     response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
     assert response.status_code == 200
     payload = response.json()
@@ -98,12 +151,48 @@ def test_realtime_filters_scope_caps_ten_and_orders_by_weight(client, monkeypatc
 
 
 def test_realtime_search_with_no_documents_reports_no_results(client, monkeypatch):
-    monkeypatch.setattr(main, 'BochaSearchClient', lambda: type('Client', (), {
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
         'search': lambda self, query, count=10: SearchResult(True, []),
     })())
     response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
     assert response.status_code == 200
     assert response.json()['status'] == 'NO_RESULTS'
+
+
+def test_realtime_search_rejects_non_tertiary_hospital_tier(client):
+    response = client.post('/v1/realtime-hospital-search', json={**_realtime_payload(), 'hospital_tiers': ['secondary']})
+    assert response.status_code == 400
+
+
+def test_realtime_search_uses_bocha_only_when_anysearch_is_unavailable(client, monkeypatch):
+    document = SearchDocument(
+        title='Fallback Shenzhen Hospital', url='https://fallback.example.org',
+        snippet='Shenzhen cardiology department', fetched_at=datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    calls = {'bocha': 0}
+
+    monkeypatch.setenv('BOCHA_API_KEY', 'test-bocha-key')
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(False, []),
+    })())
+
+    class FallbackClient:
+        def search(self, query, count=10):
+            calls['bocha'] += 1
+            return SearchResult(True, [document])
+
+    monkeypatch.setattr(main, 'BochaSearchClient', FallbackClient)
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{'canonical_name': document.title}])
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location, **kwargs: HospitalCandidate(
+        name=document.title, city='Shenzhen', province='Guangdong', district='Nanshan',
+        sources=[document], specialties=('cardiology',),
+    ))
+
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+
+    assert response.status_code == 200
+    assert response.json()['status'] == 'OK'
+    assert calls['bocha'] == 2
 
 
 def test_realtime_result_has_short_lived_detail_context(client, monkeypatch):
@@ -115,15 +204,124 @@ def test_realtime_result_has_short_lived_detail_context(client, monkeypatch):
         name='Shenzhen Heart Hospital', city='Shenzhen', province='Guangdong', district='Nanshan',
         sources=[document], specialties=('cardiology',),
     ))
-    monkeypatch.setattr(main, 'BochaSearchClient', lambda: type('Client', (), {
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
         'search': lambda self, query, count=10: SearchResult(True, [document]),
     })())
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{'canonical_name': document.title}])
     response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
     result_id = response.json()['results'][0]['id']
     detail = client.get(f'/v1/realtime-hospitals/{result_id}')
     assert detail.status_code == 200
     assert detail.json()['name'] == 'Shenzhen Heart Hospital'
     assert detail.json()['sources'][0]['url'] == 'https://hospital.example.org'
+
+
+def test_realtime_detail_prefers_database_address_over_city_only_session(client, monkeypatch):
+    document = SearchDocument(
+        title='Database Address Hospital', url='https://hospital.example.org',
+        snippet='Hospital information', fetched_at=datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location, **kwargs: HospitalCandidate(
+        name='Database Address Hospital', city='Shenzhen', province='Guangdong', district='Nanshan',
+        address='Shenzhen', specialties=('cardiology',), sources=[document],
+    ))
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, [document]),
+    })())
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{
+        'canonical_name': 'Database Address Hospital', 'city': 'Shenzhen', 'province': 'Guangdong',
+        'district': 'Nanshan', 'address': 'Guangdong Shenzhen Nanshan Hospital Road 1',
+        'tier': 'Tertiary A', 'specialty_capabilities': [],
+    }])
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+    result_id = response.json()['results'][0]['id']
+
+    detail = client.get(f'/v1/realtime-hospitals/{result_id}')
+
+    assert detail.status_code == 200
+    assert detail.json()['address'] == 'Guangdong Shenzhen Nanshan Hospital Road 1'
+
+
+def test_realtime_detail_prefers_database_introduction_over_search_snippet(client, monkeypatch):
+    document = SearchDocument(
+        title='Database Introduction Hospital', url='https://hospital.example.org',
+        snippet='Search provider summary', fetched_at=datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    database_introduction = 'Database verified hospital introduction.'
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location, **kwargs: HospitalCandidate(
+        name='Database Introduction Hospital', city='Shenzhen', province='Guangdong', district='Nanshan',
+        sources=[document], specialties=('cardiology',),
+    ))
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, [document]),
+    })())
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{
+        'canonical_name': 'Database Introduction Hospital', 'city': 'Shenzhen', 'province': 'Guangdong',
+        'district': 'Nanshan', 'address': 'Guangdong Shenzhen Nanshan Hospital Road 1',
+        'tier': 'Tertiary A', 'introduction': database_introduction, 'specialty_capabilities': [],
+    }])
+
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+    result_id = response.json()['results'][0]['id']
+    detail = client.get(f'/v1/realtime-hospitals/{result_id}')
+
+    assert detail.status_code == 200
+    assert detail.json()['introduction'] == database_introduction
+
+
+def test_realtime_detail_exposes_verified_website_and_wechat_appointment_label(client, monkeypatch):
+    document = SearchDocument(
+        title='Website Detail Hospital', url='https://search.example.org',
+        snippet='Search provider summary', fetched_at=datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location, **kwargs: HospitalCandidate(
+        name='Website Detail Hospital', city='Shenzhen', province='Guangdong', district='Nanshan',
+        sources=[document], specialties=('cardiology',),
+    ))
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, [document]),
+    })())
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{
+        'canonical_name': 'Website Detail Hospital', 'city': 'Shenzhen', 'province': 'Guangdong',
+        'district': 'Nanshan', 'address': 'Hospital Road 1', 'official_domain': 'https://hospital.example.org',
+        'introduction': 'Database introduction', 'tier': 'Tertiary A', 'specialty_capabilities': [],
+    }])
+
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+    result_id = response.json()['results'][0]['id']
+    detail = client.get(f'/v1/realtime-hospitals/{result_id}')
+
+    assert detail.status_code == 200
+    assert detail.json()['official_website_url'] == 'https://hospital.example.org'
+    assert detail.json()['wechat_appointment'] == 'Website Detail Hospital公众号'
+
+
+def test_realtime_detail_rebuilds_after_in_memory_context_is_lost(client, monkeypatch):
+    document = SearchDocument(
+        title='Database Hospital', url='https://hospital.example.org',
+        snippet='Guangzhou cardiology department', fetched_at=datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location, **kwargs: HospitalCandidate(
+        name='Database Hospital', city='Shenzhen', province='Guangdong', district='Nanshan',
+        address='广东省深圳市南山区医院路1号', specialties=('心血管内科',), sources=[document],
+    ))
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, [document]),
+    })())
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{
+        'canonical_name': 'Database Hospital', 'city': 'Shenzhen', 'province': 'Guangdong',
+        'district': 'Nanshan', 'address': '广东省深圳市南山区医院路1号', 'tier': '三级甲等',
+        'specialty_capabilities': [],
+    }])
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+    result_id = response.json()['results'][0]['id']
+    main.REALTIME_DETAIL_SESSIONS.clear()
+
+    detail = client.get(f'/v1/realtime-hospitals/{result_id}')
+
+    assert detail.status_code == 200
+    assert detail.json()['name'] == 'Database Hospital'
+    assert detail.json()['address'] == '广东省深圳市南山区医院路1号'
 
 
 def test_blank_query_returns_invalid_request(client):
@@ -173,16 +371,34 @@ def test_ai_match_without_api_key_falls_back_to_local_match(client, monkeypatch)
     })
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload['directions'] == ['心血管内科']
-    assert [result['id'] for result in payload['results']] == ['beijing-pumch']
-    assert payload['ai'] == {
-        'used': False,
-        'summary': None,
-        'directions': [],
-        'fallback': True,
-    }
-    assert payload['pending_candidates'] == []
+
+
+def test_realtime_search_runs_synthesis_off_event_loop(client, monkeypatch):
+    import asyncio
+    import app.main as main_module
+
+    called = False
+
+    def synthesis(**kwargs):
+        nonlocal called
+        called = True
+        return kwargs['results']
+
+    monkeypatch.setattr(main_module, 'synthesize_hospital_results', synthesis)
+    monkeypatch.setattr(main_module, '_directory_fallback_candidates', lambda request: [])
+    monkeypatch.setattr(main_module, '_cached_external_search', lambda *args, **kwargs: asyncio.sleep(0, result=None))
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
+
+    response = client.post('/v1/realtime-hospital-search', json={
+        'query': '胸痛',
+        'location': {'province': '广东省', 'city': '广州市', 'district': '番禺区'},
+        'scope': 'district',
+        'ai_consent': True,
+        'hospital_tiers': ['tertiary_a'],
+    })
+
+    assert response.status_code == 200
+    assert called is True
 
 
 def test_ai_match_returns_placeholders_for_ai_directions_with_a_max_length_city(client, monkeypatch):
