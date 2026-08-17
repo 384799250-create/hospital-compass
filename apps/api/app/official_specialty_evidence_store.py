@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 from pathlib import Path
 import sqlite3
@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 
 AUTOMATIC_VERIFICATION_STATUS = '官网自动核验'
+STALE_VERIFICATION_STATUS = '待复核'
+REVIEW_WINDOW = timedelta(days=180)
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,8 @@ def persist_official_capabilities(
     items: Iterable[OfficialSpecialtyEvidence], *, path: Path,
 ) -> PersistReport:
     """Persist valid official-site evidence without modifying existing manual rows."""
+    items = tuple(items)
+    expire_stale_official_capabilities(path=path, now=datetime.now(UTC))
     inserted = refreshed = rejected = 0
     with _connect(path) as connection:
         _ensure_schema(connection)
@@ -63,19 +67,22 @@ def persist_official_capabilities(
             existing = connection.execute(
                 '''SELECT id FROM department_capabilities
                    WHERE hospital_id = ? AND department_id = ? AND evidence_url = ?
-                     AND evidence_fingerprint = ? AND verification_status = ?''',
+                     AND evidence_fingerprint = ?
+                     AND verification_status IN (?, ?)''',
                 (
                     item.hospital_id,
                     department['department_id'],
                     item.evidence_url,
                     fingerprint,
                     AUTOMATIC_VERIFICATION_STATUS,
+                    STALE_VERIFICATION_STATUS,
                 ),
             ).fetchone()
             if existing is not None:
                 connection.execute(
-                    'UPDATE department_capabilities SET last_verified_at = ? WHERE id = ?',
-                    (_timestamp(item.fetched_at), existing['id']),
+                    '''UPDATE department_capabilities
+                       SET last_verified_at = ?, verification_status = ? WHERE id = ?''',
+                    (_timestamp(item.fetched_at), AUTOMATIC_VERIFICATION_STATUS, existing['id']),
                 )
                 refreshed += 1
                 continue
@@ -114,6 +121,19 @@ def persist_official_capabilities(
             )
             inserted += 1
     return PersistReport(inserted=inserted, refreshed=refreshed, rejected=rejected)
+
+
+def expire_stale_official_capabilities(*, path: Path, now: datetime) -> int:
+    """Mark unrefreshed automatic evidence as pending review after 180 days."""
+    cutoff = (now.astimezone(UTC) - REVIEW_WINDOW).isoformat()
+    with _connect(path) as connection:
+        _ensure_schema(connection)
+        cursor = connection.execute(
+            '''UPDATE department_capabilities SET verification_status = ?
+               WHERE verification_status = ? AND last_verified_at < ?''',
+            (STALE_VERIFICATION_STATUS, AUTOMATIC_VERIFICATION_STATUS, cutoff),
+        )
+    return cursor.rowcount
 
 
 def _connect(path: Path) -> sqlite3.Connection:
