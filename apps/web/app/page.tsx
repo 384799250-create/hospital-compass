@@ -134,6 +134,12 @@ const LOCATION_TREE: Record<string, Record<string, string[]>> = (provinceData as
   return tree;
 }, {} as Record<string, Record<string, string[]>>);
 
+export function scrollToResultScope(element: HTMLElement | null) {
+  if (!element || typeof window === 'undefined') return;
+  const top = Math.max(0, element.getBoundingClientRect().top + window.scrollY - 16);
+  window.scrollTo({ top, behavior: 'smooth' });
+}
+
 export default function Page() {
   const [surface, setSurface] = useState<'landing' | 'guided' | 'results'>('landing');
   const [query, setQuery] = useState('');
@@ -177,6 +183,8 @@ export default function Page() {
   const acknowledgementRef = useRef<HTMLButtonElement>(null);
   const emergencyDialogRef = useRef<HTMLDialogElement>(null);
   const triagePanelRef = useRef<HTMLElement>(null);
+  const scopeBarRef = useRef<HTMLDivElement>(null);
+  const pendingScopeScrollRef = useRef(false);
 
   useEffect(() => {
     const profile = getProfile();
@@ -241,6 +249,15 @@ export default function Page() {
     return () => window.cancelAnimationFrame(frame);
   }, [triageResponse, realtimeResponse]);
 
+  useEffect(() => {
+    if (!pendingScopeScrollRef.current || realtimeResponse?.status !== 'OK') return;
+    const frame = window.requestAnimationFrame(() => {
+      scrollToResultScope(scopeBarRef.current);
+      pendingScopeScrollRef.current = false;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [realtimeResponse]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -288,6 +305,7 @@ export default function Page() {
     setRealtimeError(null);
     setScopeSwitching(isScopeSwitch);
     if (!preserveCurrent) {
+      pendingScopeScrollRef.current = true;
       setRealtimeResponse(null);
       setDetail(null);
     }
@@ -727,6 +745,7 @@ export default function Page() {
     setSelectedResultDirectionKey(input.triage.directions.find((item) => item.department === input.direction)?.key ?? null);
     setTriageResponse(input.triage);
     setSurface('results');
+    pendingScopeScrollRef.current = true;
     setRealtimeError(null);
     setRealtimeLoading(true);
     try {
@@ -1125,7 +1144,7 @@ export default function Page() {
           <p className={styles.notice}>{realtimeResponse.status === 'SEARCH_UNAVAILABLE' ? '暂时无法连接公开资料搜索服务，请稍后重试。你的输入没有问题。' : realtimeResponse.status === 'NO_RESULTS' ? '暂未找到符合当前范围的医院资料，请扩大排名范围或补充症状描述。' : '当前描述可能需要急诊处理，请优先联系 120。'}</p>
         </>}
         {realtimeResponse?.status === 'OK' && <>
-          <div className={styles.scopeBar} aria-busy={scopeChangeInProgress}>
+          <div ref={scopeBarRef} className={styles.scopeBar} aria-busy={scopeChangeInProgress}>
             <div className={styles.scopeNoteRow}><p className={styles.scopeNote}>当前排名范围：{SCOPE_LABELS[realtimeResponse.scope]}。系统已按用户选择的最小地址范围检索公开资料。</p></div>
             <div className={styles.scopeSwitcher} role="tablist" aria-label="切换排名范围">{(['district', 'city', 'province', 'national'] as const).map((level) => <button key={level} type="button" role="tab" aria-selected={realtimeResponse.scope === level} className={realtimeResponse.scope === level ? styles.scopeActive : ''} disabled={realtimeLoading} onClick={() => void switchRealtimeScope(level)}>{SCOPE_LABELS[level]}</button>)}</div>
           </div>

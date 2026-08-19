@@ -39,6 +39,7 @@ const response = {
 describe('result controls', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     vi.mocked(realtimeSearchHospitals).mockResolvedValue(response);
   });
 
@@ -74,6 +75,18 @@ describe('result controls', () => {
     await user.click(screen.getByRole('tab', { name: '\u533a/\u53bf\u7ea7' }));
     expect(screen.getByLabelText('\u9009\u62e9\u533a\u53bf')).toBeTruthy();
     expect(realtimeSearchHospitals).toHaveBeenCalledTimes(2);
+  });
+
+  it('positions the scope switcher after the initial hospital results load', async () => {
+    const user = userEvent.setup();
+    render(<Page />);
+
+    await user.click(screen.getByRole('button', { name: '开始使用' }));
+    await user.click(screen.getByRole('button', { name: '显示推荐结果' }));
+    await screen.findByText('示例医院');
+
+    await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' })));
+    expect(screen.getByRole('tablist', { name: '切换排名范围' })).toBeTruthy();
   });
 
   it('sets every geography score to 100 and recomputes the displayed total without refetching', async () => {
