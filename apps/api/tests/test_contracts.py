@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
+import sqlite3
 from datetime import UTC, date, datetime
 from functools import partial
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 import pytest
@@ -45,8 +47,211 @@ def reset_search_controls():
     main.REALTIME_SEARCH_BUDGET._calls.clear()
 
 
-def test_health_returns_ok(client):
-    assert client.get('/health').json() == {'status': 'ok'}
+def test_health_reports_loaded_hospital_data(client, monkeypatch):
+    monkeypatch.setattr(main, 'tertiary_rows', lambda: [{}, {}])
+    monkeypatch.setattr(main, 'tertiary_database_path', lambda: Path('F:/hospital-database/db/hospital_database.db'))
+
+    assert client.get('/health').json() == {
+        'status': 'ok',
+        'hospital_data': {
+            'loaded': True,
+            'hospital_count': 2,
+            'database_path': 'F:/hospital-database/db/hospital_database.db',
+        },
+    }
+
+
+def test_health_reports_degraded_when_no_hospitals_are_loaded(client, monkeypatch):
+    monkeypatch.setattr(main, 'tertiary_rows', lambda: [])
+    monkeypatch.setattr(main, 'tertiary_database_path', lambda: Path('F:/hospital-compass-data/tertiary-a.sqlite3'))
+
+    assert client.get('/health').json() == {
+        'status': 'degraded',
+        'hospital_data': {
+            'loaded': False,
+            'hospital_count': 0,
+            'database_path': 'F:/hospital-compass-data/tertiary-a.sqlite3',
+        },
+    }
+
+
+def test_hospital_directory_returns_comprehensive_ranked_page(client, monkeypatch):
+    monkeypatch.setattr(main, '_build_directory_results', lambda: [
+        {'id': 'h2', 'name': '乙医院', 'city': '上海市', 'score': 81.0, 'score_breakdown': {'hospital_strength': 81}},
+        {'id': 'h1', 'name': '甲医院', 'city': '北京市', 'score': 94.0, 'score_breakdown': {'hospital_strength': 94}},
+    ])
+
+    response = client.get('/v1/hospital-directory?page=1&page_size=1')
+
+    assert response.status_code == 200
+    assert response.json() == {
+        'status': 'OK',
+        'page': 1,
+        'page_size': 1,
+        'total': 2,
+        'fetched_at': None,
+        'results': [
+            {'id': 'h1', 'name': '甲医院', 'city': '北京市', 'score': 94.0, 'score_breakdown': {'hospital_strength': 94}},
+        ],
+    }
+
+
+def test_hospital_directory_sort_key_uses_hospital_strength_only():
+    results = [
+        {'name': '综合总分更高但实力较低', 'score': 96.0, 'score_breakdown': {'public_capability': 82.0}},
+        {'name': '医院实力更高', 'score': 88.0, 'score_breakdown': {'public_capability': 97.0}},
+    ]
+
+    ordered = sorted(results, key=main._directory_sort_key)
+
+    assert [item['name'] for item in ordered] == ['医院实力更高', '综合总分更高但实力较低']
+
+
+def test_ranking_enrichment_collects_evidence_from_duplicate_hospital_records(monkeypatch):
+    fetched_at = datetime(2026, 8, 17, tzinfo=UTC)
+    candidate = HospitalCandidate(
+        name='北海市中医医院', official_full_name='北海市中医医院', city='北海市',
+        province='广西壮族自治区', district='海城区', address='广西北海市海城区新建路1号',
+        sources=[SearchDocument(title='北海市中医医院', url='https://directory.example/current', snippet='', fetched_at=fetched_at)],
+    )
+    rows = [
+        {
+            'id': 'current', 'canonical_name': '北海市中医医院', 'official_full_name': '北海市中医医院',
+            'city': '北海市', 'province': '广西壮族自治区', 'district': '海城区',
+            'address': '广西北海市海城区新建路1号', 'official_domain': 'www.bhszyyy.com',
+        },
+        {
+            'id': 'legacy', 'canonical_name': '北海市中医院', 'official_full_name': '北海市中医医院',
+            'city': '北海市', 'province': '广西壮族自治区', 'district': '海城区',
+            'address': '广西北海市海城区新建路1号', 'official_domain': 'www.bhszyyy.com',
+        },
+    ]
+    monkeypatch.setattr(main, 'tertiary_rows', lambda: rows)
+    monkeypatch.setattr(main, 'ranking_records_for_hospitals', lambda hospitals, *, path: {
+        hospital: [{'hospital': hospital, 'city': '北海市', 'specialty': '', 'rank': 1}]
+        for hospital in hospitals
+    })
+    monkeypatch.setattr(main, 'credential_records_for_hospitals', lambda hospital_ids, specialties, *, path: {
+        hospital_id: [{
+            'hospital_id': hospital_id, 'specialty': specialties[0], 'credential_name': f'{hospital_id}资质',
+            'credential_level': '省级', 'evidence_url': 'https://example.org/evidence', 'issue_year': 2024,
+        }]
+        for hospital_id in hospital_ids
+    })
+
+    enriched = main._attach_ranking_evidence([candidate], ['儿科'])
+
+    assert {item['hospital'] for item in enriched[0].ranking_evidence} == {'北海市中医医院', '北海市中医院'}
+    assert {item['credential_name'] for item in enriched[0].capability_evidence} == {'current资质', 'legacy资质'}
+
+
+def test_database_identity_enrichment_allows_external_alias_to_merge_with_local_candidate():
+    fetched_at = datetime(2026, 8, 17, tzinfo=UTC)
+    local = HospitalCandidate(
+        name='北海市中医医院', official_full_name='北海市中医医院', city='北海市',
+        sources=[SearchDocument(title='北海市中医医院', url='https://directory.example/current', snippet='', fetched_at=fetched_at)],
+    )
+    external_alias = HospitalCandidate(
+        name='北海市中医院', city='北海市',
+        sources=[SearchDocument(title='北海市中医院', url='https://search.example/legacy', snippet='', fetched_at=fetched_at)],
+    )
+    database_rows = [{
+        'canonical_name': '北海市中医院', 'official_full_name': '北海市中医医院', 'city': '北海市',
+    }]
+
+    external_with_identity = main._apply_database_identity([external_alias], database_rows)
+    merged = main.merge_hospital_candidates([local, *external_with_identity])
+
+    assert len(merged) == 1
+    assert merged[0].name == '北海市中医医院'
+
+
+def test_official_specialty_evidence_items_only_accept_registered_official_domains():
+    fetched_at = datetime(2026, 8, 17, tzinfo=UTC)
+    candidate = HospitalCandidate(
+        name='合浦县人民医院', city='北海市',
+        sources=[SearchDocument(
+            title='医院简介 - 合浦县人民医院',
+            url='https://hospital.example.org/about',
+            snippet='神经内科为广西医疗卫生重点学科（县级）。',
+            fetched_at=fetched_at,
+        )],
+    )
+    rows = [{
+        'id': 'H1', 'canonical_name': '合浦县人民医院', 'city': '北海市',
+        'official_domain': 'hospital.example.org',
+    }]
+
+    items = main._official_specialty_evidence_items([candidate], ['神经内科'], rows)
+
+    assert len(items) == 1
+    assert items[0].hospital_id == 'H1'
+    assert items[0].department == '神经内科'
+    assert items[0].quoted_text == '神经内科为广西医疗卫生重点学科（县级）'
+    third_party = HospitalCandidate(
+        name='合浦县人民医院', city='北海市',
+        sources=[SearchDocument(
+            title='转载页面', url='https://third-party.example.org/about',
+            snippet='神经内科为广西医疗卫生重点学科（县级）。', fetched_at=fetched_at,
+        )],
+    )
+    assert main._official_specialty_evidence_items([third_party], ['神经内科'], rows) == []
+
+
+def test_realtime_search_schedules_official_specialty_evidence_without_waiting(client, monkeypatch):
+    fetched_at = datetime(2026, 8, 17, tzinfo=UTC)
+    document = SearchDocument(
+        title='医院简介 - 合浦县人民医院',
+        url='https://hospital.example.org/about',
+        snippet='神经内科为广西医疗卫生重点学科（县级）。',
+        fetched_at=fetched_at,
+    )
+    row = {
+        'id': 'H1', 'canonical_name': '合浦县人民医院', 'city': '北海市',
+        'province': '广西壮族自治区', 'district': '合浦县',
+        'address': '北海市合浦县定海路1号', 'tier': '三级甲等',
+        'official_domain': 'hospital.example.org', 'specialty_capabilities': [],
+    }
+    scheduled = []
+    monkeypatch.setattr(main, '_build_local_results', lambda *args: ([], []))
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [row])
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, **kwargs: HospitalCandidate(
+        name='合浦县人民医院', city='北海市', province='广西壮族自治区', district='合浦县',
+        address='北海市合浦县定海路1号', tier='三级甲等', sources=[document],
+    ))
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, [document]),
+    })())
+    monkeypatch.setattr(
+        main,
+        '_persist_official_specialty_evidence_safely',
+        lambda items, path: scheduled.extend(items),
+    )
+
+    response = client.post('/v1/realtime-hospital-search', json={
+        'query': '持续头痛',
+        'location': {'province': '广西壮族自治区', 'city': '北海市', 'district': '合浦县'},
+        'scope': 'district', 'confirmed_direction': '神经内科', 'ai_consent': False,
+    })
+
+    assert response.status_code == 200
+    assert response.json()['status'] == 'OK'
+    assert [(item.hospital_id, item.department) for item in scheduled] == [('H1', '神经内科')]
+
+
+def test_official_specialty_persistence_failure_is_isolated(monkeypatch, tmp_path):
+    item = main.OfficialSpecialtyEvidence(
+        hospital_id='H1', department='神经内科', strength_level='县级重点学科',
+        quoted_text='神经内科为县级重点学科', evidence_url='https://hospital.example.org/about',
+        source_title='医院简介', fetched_at='2026-08-17T00:00:00+00:00',
+    )
+    monkeypatch.setattr(
+        main,
+        'persist_official_capabilities',
+        lambda items, *, path: (_ for _ in ()).throw(sqlite3.Error('database busy')),
+    )
+
+    main._persist_official_specialty_evidence_safely([item], tmp_path / 'hospital.db')
 
 
 def test_clarification_endpoint_returns_503_when_ai_is_unavailable(client, monkeypatch):
@@ -75,6 +280,33 @@ def test_directory_fallback_does_not_treat_pending_capability_as_specialty_stren
     ))
     assert candidates[0].specialties == ()
     assert candidates[0].capability_evidence == ()
+
+
+def test_attach_ranking_evidence_batches_database_lookups(monkeypatch):
+    rows = [
+        {'id': 'H1', 'canonical_name': '医院甲', 'official_full_name': '医院甲', 'province': '广东省', 'city': '广州市', 'district': '越秀区', 'address': '甲路1号'},
+        {'id': 'H2', 'canonical_name': '医院乙', 'official_full_name': '医院乙', 'province': '广东省', 'city': '广州市', 'district': '天河区', 'address': '乙路1号'},
+    ]
+    fetched_at = datetime(2026, 8, 18, tzinfo=UTC)
+    candidates = [
+        HospitalCandidate(name='医院甲', city='广州市', sources=[SearchDocument(title='医院甲', url='https://example.org/a', snippet='', fetched_at=fetched_at)]),
+        HospitalCandidate(name='医院乙', city='广州市', sources=[SearchDocument(title='医院乙', url='https://example.org/b', snippet='', fetched_at=fetched_at)]),
+    ]
+    monkeypatch.setattr(main, 'tertiary_rows', lambda: rows)
+    monkeypatch.setattr(main, 'ranking_records', lambda **kwargs: pytest.fail('must not query rankings per hospital'))
+    monkeypatch.setattr(main, 'credential_records', lambda **kwargs: pytest.fail('must not query credentials per hospital'))
+    monkeypatch.setattr(main, 'ranking_records_for_hospitals', lambda hospitals, *, path: {
+        '医院甲': [{'hospital': '医院甲', 'city': '广州市', 'specialty': '神经内科', 'rank': 1, 'ranking_scope': '全国'}],
+        '医院乙': [],
+    }, raising=False)
+    monkeypatch.setattr(main, 'credential_records_for_hospitals', lambda hospital_ids, specialties, *, path: {
+        'H2': [{'specialty': '神经内科', 'credential_name': '国家临床重点专科', 'credential_level': '国家级'}],
+    }, raising=False)
+
+    enriched = main._attach_ranking_evidence(candidates, ['神经内科'])
+
+    assert enriched[0].ranking_evidence[0]['rank'] == 1
+    assert enriched[1].capability_evidence[0]['credential_name'] == '国家临床重点专科'
 
 
 def test_directory_fallback_does_not_treat_generic_capability_scope_as_specialty_evidence(client, monkeypatch):
@@ -148,6 +380,95 @@ def test_realtime_filters_scope_caps_ten_and_orders_by_weight(client, monkeypatc
     assert len(payload['results']) == 10
     assert all(result['city'] == 'Shenzhen' for result in payload['results'])
     assert payload['results'][0]['score'] >= payload['results'][-1]['score']
+
+
+def test_realtime_keeps_local_results_before_network_supplements(client, monkeypatch):
+    fetched_at = datetime(2026, 8, 6, tzinfo=UTC)
+    local_row = {
+        'canonical_name': 'Local Priority Hospital', 'province': 'Guangdong', 'city': 'Shenzhen',
+        'district': 'Nanshan', 'address': 'Local Road 1', 'tier': 'Tertiary A',
+        'official_domain': 'local-priority.example.org', 'specialty_capabilities': [],
+    }
+    external_rows = [{
+        'canonical_name': f'External Hospital {index}', 'province': 'Guangdong', 'city': 'Shenzhen',
+        'district': 'Nanshan', 'address': f'External Road {index}', 'tier': 'Tertiary A',
+        'specialty_capabilities': [],
+    } for index in range(10)]
+    documents = [
+        SearchDocument(
+            title=row['canonical_name'], url=f"https://search.example.org/{index}",
+            snippet='Shenzhen cardiology department', fetched_at=fetched_at,
+        )
+        for index, row in enumerate(external_rows)
+    ]
+
+    def rows(**kwargs):
+        return [local_row] if kwargs else [local_row, *external_rows]
+
+    monkeypatch.setattr(main, 'tertiary_rows', rows)
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, documents),
+    })())
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location, **kwargs: HospitalCandidate(
+        name=document.title, city='Shenzhen', province='Guangdong', district='Nanshan',
+        address='Network address', sources=[document], specialties=('cardiology',),
+    ))
+
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+
+    assert response.status_code == 200
+    names = [result['name'] for result in response.json()['results']]
+    assert names[0] == 'Local Priority Hospital'
+    assert len(names) == 10
+    assert names[1:] == [f'External Hospital {index}' for index in range(9)]
+
+
+def test_local_priority_orders_final_results_by_current_score():
+    local_results = [
+        {'id': 'hepu', 'name': '合浦县人民医院'},
+        {'id': 'beihai', 'name': '北海市中医院'},
+    ]
+    ranked_candidates = [
+        {'id': 'hepu', 'name': '合浦县人民医院', 'score': 58.4263},
+        {'id': 'beihai', 'name': '北海市中医院', 'score': 58.5},
+        {'id': 'supplement', 'name': '补充医院', 'score': 51.0},
+    ]
+
+    results = main._prioritize_local_results(local_results, ranked_candidates)
+
+    assert [result['id'] for result in results] == ['beihai', 'hepu', 'supplement']
+
+
+def test_local_priority_truncates_after_sorting_supplements():
+    local_results = [
+        {'id': f'local-{index}', 'name': f'本地医院{index}', 'score': 80 - index}
+        for index in range(10)
+    ]
+    ranked_candidates = [
+        *local_results,
+        {'id': 'supplement', 'name': '高分补充医院', 'score': 99.0},
+    ]
+
+    results = main._prioritize_local_results(local_results, ranked_candidates)
+
+    assert len(results) == 10
+    assert results[0]['id'] == 'supplement'
+
+
+def test_realtime_does_not_search_network_when_local_results_fill_limit(client, monkeypatch):
+    rows = [{
+        'canonical_name': f'Local Hospital {index}', 'province': 'Guangdong', 'city': 'Shenzhen',
+        'district': 'Nanshan', 'address': f'Local Road {index}', 'tier': 'Tertiary A',
+        'specialty_capabilities': [],
+    } for index in range(10)]
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: rows)
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: pytest.fail('Network search must not run'))
+
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+
+    assert response.status_code == 200
+    assert response.json()['search_mode'] == '本地资料'
+    assert len(response.json()['results']) == 10
 
 
 def test_realtime_search_with_no_documents_reports_no_results(client, monkeypatch):
@@ -294,6 +615,39 @@ def test_realtime_detail_exposes_verified_website_and_wechat_appointment_label(c
     assert detail.status_code == 200
     assert detail.json()['official_website_url'] == 'https://hospital.example.org'
     assert detail.json()['wechat_appointment'] == 'Website Detail Hospital公众号'
+
+
+def test_realtime_result_prefers_verified_database_website_over_realtime_website(client, monkeypatch):
+    document = SearchDocument(
+        title='Verified Website Hospital', url='https://search.example.org',
+        snippet='Search provider summary', fetched_at=datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    monkeypatch.setattr(main, 'candidate_from_document', lambda document, *, location, **kwargs: HospitalCandidate(
+        name='Verified Website Hospital', city='Shenzhen', province='Guangdong', district='Nanshan',
+        official_website_url='https://stale.example.org', sources=[document], specialties=('cardiology',),
+    ))
+    monkeypatch.setattr(main, 'AnySearchClient', lambda: type('Client', (), {
+        'search': lambda self, query, count=10: SearchResult(True, [document]),
+    })())
+    monkeypatch.setattr(main, 'tertiary_rows', lambda **kwargs: [{
+        'canonical_name': 'Verified Website Hospital', 'city': 'Shenzhen', 'province': 'Guangdong',
+        'district': 'Nanshan', 'address': 'Hospital Road 1', 'official_domain': 'https://verified.example.org',
+        'tier': 'Tertiary A', 'specialty_capabilities': [],
+    }])
+    monkeypatch.setattr(main, 'rank_candidates', lambda *args, **kwargs: [{
+        'id': 'verified-website-hospital', 'name': 'Verified Website Hospital', 'city': 'Shenzhen',
+        'province': 'Guangdong', 'district': 'Nanshan', 'tier': 'Tertiary A', 'score': 90.0,
+        'score_reasons': [], 'score_breakdown': {}, 'sources': [document.model_dump(mode='json')],
+        'source_urls': [str(document.url)], 'fetched_at': document.fetched_at,
+        'registration_url': None, 'official_website_url': 'https://stale.example.org',
+        'specialties': ['cardiology'], 'address': 'Hospital Road 1',
+        'core_advantages': '', 'match_reason': '',
+    }])
+
+    response = client.post('/v1/realtime-hospital-search', json=_realtime_payload())
+
+    assert response.status_code == 200
+    assert response.json()['results'][0]['official_website_url'] == 'https://verified.example.org'
 
 
 def test_realtime_detail_rebuilds_after_in_memory_context_is_lost(client, monkeypatch):

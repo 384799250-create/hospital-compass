@@ -1,0 +1,331 @@
+.page {
+  --ink: #123d3a;
+  --muted: #5c746f;
+  --soft: #eef6f3;
+  --line: #d6e4df;
+  --accent: #17776e;
+  min-height: 100vh;
+  color: var(--ink);
+  background: #f8faf9;
+  font-family: "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 76px;
+  padding: 0 clamp(20px, 5vw, 72px);
+  border-bottom: 1px solid var(--line);
+  background: #fffefa;
+}
+
+.brand {
+  color: var(--ink);
+  font-size: 23px;
+  font-weight: 900;
+  letter-spacing: -.08em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.brand::before {
+  display: inline-grid;
+  width: 27px;
+  height: 27px;
+  margin-right: 8px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #eb806f;
+  content: "+";
+  font-size: 23px;
+  font-weight: 500;
+  letter-spacing: 0;
+  vertical-align: -2px;
+}
+
+.headerLinks {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.headerLinks a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.headerLinks a:hover { color: var(--accent); }
+
+.backLink {
+  padding: 8px 13px;
+  border: 1px solid #9ccfc4;
+  border-radius: 20px;
+  color: var(--accent) !important;
+  background: #f4fcf9;
+  font-weight: 800;
+}
+
+.backLink:hover { background: #e5f1ee; }
+
+.headerLinks a:focus-visible,
+.brand:focus-visible {
+  outline: 3px solid rgb(29 129 118 / 24%);
+  outline-offset: 4px;
+}
+
+.content {
+  width: min(1120px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 70px 0 92px;
+}
+
+.intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(260px, .85fr);
+  gap: clamp(36px, 8vw, 110px);
+  align-items: end;
+  padding-bottom: 52px;
+  border-bottom: 1px solid var(--line);
+}
+
+.intro h1 {
+  max-width: 640px;
+  margin: 0;
+  font-family: Georgia, "Songti SC", serif;
+  font-size: clamp(40px, 6vw, 68px);
+  font-weight: 700;
+  letter-spacing: -.055em;
+  line-height: 1.08;
+}
+
+.intro p {
+  max-width: 620px;
+  margin: 23px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.85;
+}
+
+.introAside {
+  padding: 22px 0 4px 24px;
+  border-left: 1px solid #a9cfc5;
+}
+
+.introAside strong {
+  display: block;
+  margin-bottom: 11px;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.introAside p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  margin: 42px 0 80px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: #fffefa;
+}
+
+.step {
+  min-height: 190px;
+  padding: 24px 26px 28px;
+  border-right: 1px solid var(--line);
+}
+
+.step:last-child { border-right: 0; }
+
+.stepNumber {
+  color: var(--accent);
+  font: 700 15px Georgia, serif;
+}
+
+.step h2 {
+  margin: 18px 0 8px;
+  font-size: 18px;
+  letter-spacing: -.02em;
+}
+
+.step p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: clamp(38px, 7vw, 92px);
+  align-items: start;
+}
+
+.sections { min-width: 0; }
+
+.section {
+  padding: 0 0 46px;
+  margin: 0 0 46px;
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 28px;
+}
+
+.section:last-child { margin-bottom: 0; }
+
+.section h2 {
+  margin: 0 0 16px;
+  font-size: 28px;
+  letter-spacing: -.045em;
+  line-height: 1.25;
+}
+
+.section > p {
+  max-width: 72ch;
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.85;
+}
+
+.section h3 {
+  margin: 26px 0 8px;
+  color: #315c57;
+  font-size: 16px;
+}
+
+.section ul,
+.section ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.section li::marker { color: var(--accent); }
+
+.note {
+  margin: 20px 0 0;
+  padding: 16px 18px;
+  border: 1px solid #c8dfd7;
+  background: var(--soft);
+  color: #315c57;
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.scoreList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 24px 0 0;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.scoreList div {
+  padding: 16px 18px;
+  background: #fffefa;
+}
+
+.scoreList dt {
+  color: #315c57;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.scoreList dd {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.side {
+  position: sticky;
+  top: 28px;
+  padding: 20px 0 0 22px;
+  border-left: 1px solid var(--line);
+}
+
+.side h2 {
+  margin: 0 0 14px;
+  color: #315c57;
+  font-size: 13px;
+  letter-spacing: .08em;
+}
+
+.side ol {
+  display: grid;
+  gap: 11px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.side a {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  text-decoration: none;
+}
+
+.side a:hover { color: var(--accent); }
+
+.side p {
+  margin: 30px 0 0;
+  color: #7a8d88;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin-top: 70px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+  color: #7a8d88;
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .header { min-height: 68px; }
+  .headerLinks span { display: none; }
+  .content { width: min(100% - 32px, 620px); padding-top: 48px; }
+  .intro { grid-template-columns: 1fr; gap: 28px; padding-bottom: 38px; }
+  .introAside { padding: 0 0 0 18px; }
+  .steps { grid-template-columns: 1fr; margin: 30px 0 56px; }
+  .step { min-height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .step:last-child { border-bottom: 0; }
+  .body { grid-template-columns: 1fr; gap: 48px; }
+  .side { position: static; order: -1; padding: 0 0 22px; border-left: 0; border-bottom: 1px solid var(--line); }
+  .side ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .side p { margin-top: 20px; }
+}
+
+@media (max-width: 460px) {
+  .brand { font-size: 20px; }
+  .backLink { padding-inline: 10px; }
+  .intro h1 { font-size: 41px; }
+  .scoreList { grid-template-columns: 1fr; }
+  .side ol { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .headerLinks a { transition: none; }
+}

@@ -1,56 +1,41 @@
-# DeepSeek AI Match Final Fix Report
+# DeepSeek AI Match Final Fix Re-review
 
-## Status
+## Verdict
 
-Implemented all final backend review findings for commit `25691a8`. The pre-existing frontend working-tree changes were not modified or staged.
+**APPROVED.** All three original backend findings are **ADDRESSED** in `d30eee0` relative to `25691a8`. No new Critical or Important issue was found on the changed `apps/api` lines.
 
-## Delivered fixes
+## Original findings
 
-- Changed `AIMatchRequest.ai_consent` to Pydantic `StrictBool`, so only JSON booleans are accepted. String and numeric representations now receive HTTP 400 through the existing validation handler and cannot reach the external transport.
-- Moved the synchronous `ai_match` call, including its `urllib` network work, out of the async route's event loop with Starlette's `run_in_threadpool`.
-- Declared `response_model=AIMatchResponse` on `POST /v1/ai-matches`, exposing the inherited match fields and required `ai` metadata through OpenAPI.
-- Added an endpoint success test using the real AI matcher with an injected local transport. The test proves the transport runs without an active event loop, the AI response is wired through to hospital results, and neither the symptom query nor API key appears in request logs.
+| Finding | Status | Evidence |
+| --- | --- | --- |
+| Non-boolean consent values were coerced and could reach the DeepSeek transport. | **ADDRESSED** | `AIMatchRequest.ai_consent` now uses Pydantic `StrictBool`. The endpoint tests cover string and numeric representations and install a transport that fails if called. Independent verification sent 11 string/numeric values (`"true"`, `"false"`, `"1"`, `"0"`, `"yes"`, `""`, `1`, `0`, `-1`, `2`, `0.5`): every request returned HTTP 400 and the transport call count remained zero. |
+| Synchronous DeepSeek work ran directly on the async route's event loop. | **ADDRESSED** | `ai_matches` now awaits `starlette.concurrency.run_in_threadpool(ai_match, ...)`, moving the complete synchronous matcher and `urllib` transport path to a worker thread. The committed test proves the injected transport has no running event loop. Independent concurrency verification inserted a 350 ms synchronous matcher delay; `/health` completed in about 26 ms while the slow AI request remained in flight, and the AI request completed after about 353 ms. |
+| The AI endpoint's OpenAPI 200 response did not document its runtime response shape. | **ADDRESSED** | `POST /v1/ai-matches` now declares `response_model=AIMatchResponse`. The OpenAPI schema references that model and requires the inherited `emergency`, `directions`, `score_version`, and `results` fields plus `ai`; the `ai` object requires `used`, `summary`, `directions`, and `fallback`. Independent verification confirmed the runtime top-level keys exactly match the declared required properties. |
 
-## TDD evidence
+## New changed-line findings
 
-The endpoint regressions were added before production changes and observed failing for the intended reasons:
-
-- Eight string/numeric consent cases returned HTTP 200 instead of HTTP 400.
-- The injected transport observed an active event loop because the async route called the synchronous matcher directly.
-- The OpenAPI 200 response schema was `{}` rather than a reference to `AIMatchResponse`.
-
-After the minimal production changes, the focused regression run reported `10 passed, 6 deselected`.
+- Critical: none.
+- Important: none.
 
 ## Verification
 
-Run from `apps/api`:
+Reviewed exactly:
+
+```text
+git diff --unified=8 25691a8..d30eee0 -- apps/api
+```
+
+Executed from `apps/api` at `d30eee0`:
 
 ```text
 pytest -q
-........................................................................ [ 71%]
-.............................                                            [100%]
-101 passed in 0.64s
+101 passed in 0.59s
 ```
 
-The API-file whitespace check also completed successfully:
+Also completed:
 
 ```text
-git diff --check -- apps/api/app/main.py apps/api/app/schemas.py apps/api/tests/test_contracts.py
+git diff --check 25691a8..d30eee0 -- apps/api
 ```
 
-## Files in the task commit
-
-- `apps/api/app/main.py`
-- `apps/api/app/schemas.py`
-- `apps/api/tests/test_contracts.py`
-- `.superpowers/sdd/deepseek-ai-match-final-fix-report.md`
-
-## Commit
-
-This report is included in the task commit; resolve its immutable hash with `git rev-parse HEAD` after commit creation.
-
-## Concerns
-
-- The external transport remains synchronous by design, but the API route now isolates the entire matcher call in Starlette's worker thread pool.
-- Retries remain intentionally out of scope.
-- Pre-existing uncommitted frontend edits remain in `apps/web/app/page.module.css`, `apps/web/app/page.tsx`, and `apps/web/tests/page.test.tsx`; they were preserved and excluded from this task's commit.
+No API code was changed during this re-review. Pre-existing uncommitted frontend changes were left untouched.

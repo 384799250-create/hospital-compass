@@ -3,13 +3,16 @@ import csv
 import os
 import json
 import hashlib
+import secrets
+import sqlite3
+import time
 from io import StringIO
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -19,16 +22,27 @@ from app.matcher import is_public_record, match
 from app.data import verified_row_to_hospital
 from app.importer import load_verified_beijing_rows
 from app.importer import validate_import
-from app.schemas import AIMatchRequest, MatchRequest, RealtimeSearchRequest
+from app.schemas import AIMatchRequest, FeedbackAdminSession, FeedbackStatusUpdate, FeedbackSubmission, Location, MatchRequest, RealtimeSearchRequest
 from app.anysearch import AnySearchClient, prefer_search_result
-from app.realtime_search import _expanded_specialty_terms, candidate_from_document, merge_hospital_candidates, normalize_hospital_name, rank_candidates
+from app.realtime_search import _expanded_specialty_terms, _source_capability_evidence, candidate_from_document, merge_hospital_candidates, normalize_hospital_name, normalize_result_specialty_score, rank_candidates
 from app import web_ranker
 from app.web_ranker import synthesize_hospital_results
 from app.hospital_store import initialize as initialize_hospital_store
 from app.hospital_store import directory_rows
 from app.tertiary_store import tertiary_rows, tertiary_database_path
+from app.official_specialty_evidence_store import (
+    OfficialSpecialtyEvidence,
+    _matches_official_domain,
+    persist_official_capabilities,
+)
 from app.hospital_store import database_path
-from app.specialty_ranking_store import credential_records, ranking_records
+from app.specialty_ranking_store import (
+    credential_records,
+    credential_records_for_hospitals,
+    ranking_records,
+    ranking_records_for_hospitals,
+)
+from app.feedback_store import create_feedback, list_feedback, update_feedback_status
 from app.search_policy import HourlySearchBudget, SearchCache, compact_search_queries
 from app.disease_profiles import profile_for_query
 from app.triage import TriageResponse, triage_symptoms
@@ -54,6 +68,7 @@ REALTIME_SEARCH_CACHE = SearchCache(ttl=timedelta(minutes=30))
 REALTIME_SEARCH_BUDGET = HourlySearchBudget(
     limit=int(os.environ.get('BOCHA_MAX_CALLS_PER_HOUR', '60')),
 )
+FEEDBACK_SUBMISSION_TIMES: dict[str, list[float]] = {}
 
 
 def _directory_fallback_candidates(request: RealtimeSearchRequest) -> list[HospitalCandidate]:
@@ -95,12 +110,15 @@ def _directory_fallback_candidates(request: RealtimeSearchRequest) -> list[Hospi
         candidates.append(HospitalCandidate(
             name=name,
             city=str(row.get('city') or request.location.city),
+            official_full_name=str(row.get('official_full_name') or name).strip(),
             address=address,
             core_advantages='',
+            public_introduction=str(row.get('introduction') or '').strip(),
             province=str(row.get('province') or request.location.province),
             district=str(row.get('district') or request.location.district),
             specialties=specialties,
             tier=str(row.get('tier') or ''),
+            hospital_type=str(row.get('nature') or row.get('hospital_type') or '').strip(),
             capability_evidence=capabilities,
             registration_url=_safe_http_url(row.get('registration_url')),
             official_website_url=_safe_http_url(row.get('official_domain'), add_scheme=True),
@@ -125,20 +143,58 @@ def _safe_http_url(value: object, *, add_scheme: bool = False) -> str | None:
 def _attach_ranking_evidence(candidates: list[HospitalCandidate], directions: list[str]) -> list[HospitalCandidate]:
     """Attach stored authoritative evidence without changing candidate identity."""
     database_rows = tertiary_rows()
-    enriched: list[HospitalCandidate] = []
-    for candidate in candidates:
+    rows_by_canonical: dict[str, list[dict[str, object]]] = {}
+    rows_by_official: dict[str, list[dict[str, object]]] = {}
+    for row in database_rows:
+        canonical = normalize_hospital_name(str(row.get('canonical_name') or ''))
+        official = normalize_hospital_name(str(row.get('official_full_name') or row.get('canonical_name') or ''))
+        if canonical:
+            rows_by_canonical.setdefault(canonical, []).append(row)
+        if official:
+            rows_by_official.setdefault(official, []).append(row)
+
+    def matching_directory_rows(candidate: HospitalCandidate) -> list[dict[str, object]]:
         normalized_name = normalize_hospital_name(candidate.name)
         base_name = normalized_name.split('（', 1)[0].split('(', 1)[0].strip()
-        names = tuple(dict.fromkeys((candidate.name, normalized_name, base_name)))
-        matching_rows = [
-            row for row in database_rows
-            if normalize_hospital_name(str(row.get('canonical_name') or '')) in names
-        ]
+        normalized_official_name = normalize_hospital_name(candidate.official_full_name)
+        matches: list[dict[str, object]] = []
+        seen: set[tuple[str, str]] = set()
+        for name in (normalized_official_name, normalized_name, base_name):
+            for row in (*rows_by_official.get(name, ()), *rows_by_canonical.get(name, ())):
+                key = (str(row.get('id') or row.get('canonical_name') or ''), str(row.get('city') or ''))
+                if key not in seen:
+                    seen.add(key)
+                    matches.append(row)
+        return matches
+
+    candidate_matches = [matching_directory_rows(candidate) for candidate in candidates]
+    canonical_names = {
+        str(row.get('canonical_name') or '').strip()
+        for matches in candidate_matches for row in matches
+        if str(row.get('canonical_name') or '').strip()
+    }
+    hospital_ids = {
+        str(row.get('id') or '').strip()
+        for matches in candidate_matches for row in matches
+        if str(row.get('id') or '').strip()
+    }
+    rankings_by_hospital = ranking_records_for_hospitals(canonical_names, path=database_path())
+    credentials_by_hospital = credential_records_for_hospitals(hospital_ids, directions, path=database_path())
+    enriched: list[HospitalCandidate] = []
+    for candidate, matching_rows in zip(candidates, candidate_matches):
+        normalized_official_name = normalize_hospital_name(candidate.official_full_name)
         # The local directory is authoritative for identity and location. A
         # search result often falls back to the requested city when its page
         # omits location metadata, so city must not be used to reject an exact
         # hospital-name match.
         database_row = next(
+            (
+                row for row in matching_rows
+                if normalized_official_name
+                and normalize_hospital_name(str(row.get('canonical_name') or '')) == normalized_official_name
+            ),
+            None,
+        ) or next(
             (row for row in matching_rows if str(row.get('city') or '').strip() == candidate.city),
             None,
         ) or (matching_rows[0] if matching_rows else None)
@@ -157,10 +213,14 @@ def _attach_ranking_evidence(candidates: list[HospitalCandidate], directions: li
                 ) or None,
                 'official_website_url': _safe_http_url(database_row.get('official_domain'), add_scheme=True)
                 or candidate.official_website_url,
+                'public_introduction': str(database_row.get('introduction') or candidate.public_introduction or '').strip(),
+                'hospital_type': str(database_row.get('nature') or database_row.get('hospital_type') or candidate.hospital_type or '').strip(),
             })
-        rows = []
-        for name in names:
-            rows.extend(ranking_records(hospital=name, path=database_path()))
+        rows = [
+            ranking
+            for matched_row in matching_rows
+            for ranking in rankings_by_hospital.get(str(matched_row.get('canonical_name') or '').strip(), ())
+        ]
         city_rows = [row for row in rows if row.get('city') in {candidate.city, '全国'}]
         rows = city_rows or rows
         if directions:
@@ -180,14 +240,11 @@ def _attach_ranking_evidence(candidates: list[HospitalCandidate], directions: li
             'ranking_scope': row.get('ranking_scope') or row.get('scope') or row.get('ranking_name') or '',
             'score': float(max(0, 100 - (int(row['rank']) - 1) * 3)) if row.get('rank') else 0.0,
         } for row in rows[:5])
-        credentials = []
-        if database_row and database_row.get('id'):
-            for direction in directions:
-                credentials.extend(credential_records(
-                    hospital_id=str(database_row['id']),
-                    specialty=direction,
-                    path=database_path(),
-                ))
+        credentials = [
+            credential
+            for matched_row in matching_rows
+            for credential in credentials_by_hospital.get(str(matched_row.get('id') or '').strip(), ())
+        ]
         credential_evidence = tuple({
             'department': str(item.get('specialty') or '').strip(),
             'strength_level': str(item.get('credential_level') or '').strip(),
@@ -222,8 +279,164 @@ def _build_local_results(
         location_level=request.location_level,
         scope=request.scope,
         profile_key=profile_key,
+        ignore_geography=request.ignore_geography,
     )
     return candidates, results
+
+
+def _build_directory_results() -> list[dict[str, object]]:
+    """Build a nationwide directory ordered by the shared comprehensive score."""
+    request = RealtimeSearchRequest(
+        query='医院综合目录',
+        location=Location(province='北京市', city='北京市', district='北京市'),
+        location_level='province',
+        scope='national',
+        ai_consent=False,
+    )
+    candidates = _attach_ranking_evidence(
+        merge_hospital_candidates(_directory_fallback_candidates(request)),
+        [],
+    )
+    results = rank_candidates(
+        candidates,
+        directions=[],
+        location=request.location,
+        location_level='province',
+        scope='national',
+        profile_key='general',
+        limit=None,
+    )
+    # The directory is a hospital-strength list, not the patient-facing
+    # composite score. Keep the detailed dimensions available for diagnostics,
+    # but expose only the institutional strength as the directory score.
+    results = [normalize_result_specialty_score(result) for result in results]
+    for result in results:
+        breakdown = dict(result.get('score_breakdown') or {})
+        result['score_breakdown'] = breakdown
+        result['score'] = round(float(breakdown.get('public_capability') or 0), 4)
+        result['score_reasons'] = [
+            f'hospital_strength={round(float(breakdown.get("public_capability") or 0), 2)} (directory ranking)'
+        ]
+    results.sort(key=_directory_sort_key)
+    return results
+
+
+def _directory_sort_key(result: dict[str, object]) -> tuple[float, str]:
+    breakdown = result.get('score_breakdown') or {}
+    if not isinstance(breakdown, dict):
+        breakdown = {}
+    strength = breakdown.get('public_capability', breakdown.get('hospital_strength', result.get('score', 0)))
+    try:
+        numeric_strength = float(strength or 0)
+    except (TypeError, ValueError):
+        numeric_strength = 0.0
+    return (-numeric_strength, str(result.get('name') or '').casefold())
+
+
+def _apply_database_identity(
+    candidates: list[HospitalCandidate],
+    database_rows: list[dict[str, object]],
+) -> list[HospitalCandidate]:
+    """Fill a known candidate's official name before entity-level deduplication."""
+    identities = {
+        (
+            normalize_hospital_name(str(row.get('canonical_name') or '')),
+            str(row.get('city') or '').strip(),
+        ): str(row.get('official_full_name') or row.get('canonical_name') or '').strip()
+        for row in database_rows
+        if str(row.get('canonical_name') or '').strip()
+    }
+    enriched: list[HospitalCandidate] = []
+    for candidate in candidates:
+        official_full_name = candidate.official_full_name or identities.get((
+            normalize_hospital_name(candidate.name),
+            candidate.city.strip(),
+        ), '')
+        enriched.append(HospitalCandidate(**{
+            **candidate.__dict__,
+            'official_full_name': official_full_name,
+        }))
+    return enriched
+
+
+def _official_specialty_evidence_items(
+    candidates: list[HospitalCandidate],
+    directions: list[str],
+    database_rows: list[dict[str, object]],
+) -> list[OfficialSpecialtyEvidence]:
+    """Build persistable evidence only from registered official hospital pages."""
+    items: list[OfficialSpecialtyEvidence] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for candidate in candidates:
+        candidate_names = {
+            normalize_hospital_name(candidate.name),
+            normalize_hospital_name(candidate.official_full_name),
+        }
+        matches = [
+            row for row in database_rows
+            if normalize_hospital_name(str(row.get('canonical_name') or '')) in candidate_names
+            or normalize_hospital_name(str(row.get('official_full_name') or '')) in candidate_names
+        ]
+        row = next(
+            (item for item in matches if str(item.get('city') or '').strip() == candidate.city.strip()),
+            None,
+        ) or (matches[0] if matches else None)
+        hospital_id = str((row or {}).get('id') or '').strip()
+        official_domain = str((row or {}).get('official_domain') or '').strip()
+        if not hospital_id or not official_domain:
+            continue
+        for source in candidate.sources:
+            if not _matches_official_domain(source.url, official_domain):
+                continue
+            for evidence in _source_capability_evidence(source, directions, None):
+                quoted_text = str(evidence.get('diagnosis_scope') or '').strip()
+                department = str(evidence.get('department') or '').strip()
+                strength_level = str(evidence.get('strength_level') or '').strip()
+                key = (hospital_id, department, source.url, quoted_text)
+                if not quoted_text or not department or not strength_level or key in seen:
+                    continue
+                seen.add(key)
+                items.append(OfficialSpecialtyEvidence(
+                    hospital_id=hospital_id,
+                    department=department,
+                    strength_level=strength_level,
+                    quoted_text=quoted_text,
+                    evidence_url=source.url,
+                    source_title=source.title,
+                    fetched_at=source.fetched_at.isoformat(),
+                ))
+    return items
+
+
+def _persist_official_specialty_evidence_safely(
+    items: list[OfficialSpecialtyEvidence],
+    path: Path,
+) -> None:
+    try:
+        persist_official_capabilities(items, path=path)
+    except (sqlite3.Error, ValueError):
+        logger.warning('official specialty evidence persistence failed', exc_info=True)
+
+
+def _prioritize_local_results(
+    local_results: list[dict[str, object]],
+    ranked_candidates: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Keep local candidates, then display the selected set by current score."""
+    ranked_by_id = {str(result['id']): result for result in ranked_candidates}
+    local_ids = {str(result['id']) for result in local_results}
+    selected = [ranked_by_id.get(str(result['id']), result) for result in local_results]
+    selected.extend(
+        result for result in ranked_candidates
+        if str(result['id']) not in local_ids
+    )
+    return sorted(
+        selected,
+        key=lambda result: (
+            -float(result.get('score') or 0),
+            str(result.get('name') or '').casefold(),
+        ),
+    )[:10]
 
 
 async def _cached_external_search(
@@ -320,7 +533,82 @@ async def invalid_request_handler(request: Request, exc: RequestValidationError)
 
 @app.get('/health')
 async def health():
-    return {'status': 'ok'}
+    hospital_count = len(tertiary_rows())
+    return {
+        'status': 'ok' if hospital_count else 'degraded',
+        'hospital_data': {
+            'loaded': hospital_count > 0,
+            'hospital_count': hospital_count,
+            'database_path': tertiary_database_path().as_posix(),
+        },
+    }
+
+
+def _require_feedback_admin(request: Request) -> str:
+    expected = os.environ.get('FEEDBACK_ADMIN_TOKEN', '').strip()
+    provided = request.headers.get('X-Feedback-Admin-Token', '')
+    if not expected:
+        raise HTTPException(status_code=503, detail='Feedback admin is not configured')
+    if not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail='Feedback admin authentication failed')
+    return expected
+
+
+def _feedback_submission_is_limited(request: Request) -> bool:
+    now = time.monotonic()
+    window_start = now - 60
+    key = request.client.host if request.client else 'unknown'
+    recent = [stamp for stamp in FEEDBACK_SUBMISSION_TIMES.get(key, []) if stamp > window_start]
+    limit = max(1, int(os.environ.get('FEEDBACK_MAX_PER_MINUTE', '5')))
+    if len(recent) >= limit:
+        FEEDBACK_SUBMISSION_TIMES[key] = recent
+        return True
+    FEEDBACK_SUBMISSION_TIMES[key] = [*recent, now]
+    return False
+
+
+@app.post('/v1/feedback', status_code=201)
+async def submit_feedback(request: Request, payload: FeedbackSubmission):
+    if _feedback_submission_is_limited(request):
+        raise HTTPException(status_code=429, detail='Too many feedback submissions')
+    return create_feedback(
+        payload.category,
+        payload.message,
+        payload.contact,
+        [attachment.model_dump() for attachment in payload.attachments],
+    )
+
+
+@app.post('/admin/feedback/session')
+async def feedback_admin_session(request: FeedbackAdminSession):
+    expected = os.environ.get('FEEDBACK_ADMIN_TOKEN', '').strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail='Feedback admin is not configured')
+    if not secrets.compare_digest(request.token, expected):
+        raise HTTPException(status_code=401, detail='Feedback admin authentication failed')
+    return {'token': expected}
+
+
+@app.get('/admin/feedback')
+async def get_feedback(
+    request: Request,
+    status: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    _require_feedback_admin(request)
+    if status not in {None, 'new', 'processed'}:
+        raise HTTPException(status_code=400, detail='Invalid feedback status')
+    return list_feedback(status=status, limit=limit, offset=offset)
+
+
+@app.patch('/admin/feedback/{feedback_id}')
+async def patch_feedback(feedback_id: str, request: Request, update: FeedbackStatusUpdate):
+    _require_feedback_admin(request)
+    item = update_feedback_status(feedback_id, update.status)
+    if item is None:
+        raise HTTPException(status_code=404, detail='Feedback not found')
+    return item
 
 
 @app.post('/admin/import-preview')
@@ -397,6 +685,7 @@ async def symptom_clarification(request: dict[str, object]):
             str(request.get('query') or ''),
             answers=list(request.get('answers') or []),
             ai_consent=True,
+            asked_questions=list(request.get('asked_questions') or []),
             environ=os.environ,
         )
     except ClarificationUnavailableError as exc:
@@ -404,7 +693,10 @@ async def symptom_clarification(request: dict[str, object]):
 
 
 @app.post('/v1/realtime-hospital-search')
-async def realtime_hospital_search(request: RealtimeSearchRequest):
+async def realtime_hospital_search(
+    request: RealtimeSearchRequest,
+    background_tasks: BackgroundTasks,
+):
     """Search public web sources and return up to ten explainable results."""
     # Run the deterministic emergency classifier before any external call.
     local = match(request.query, request.location.city, 'overall')
@@ -438,74 +730,74 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
     local_candidates, local_results = await run_in_threadpool(
         _build_local_results, request, directions, profile_key,
     )
-    search_client = AnySearchClient()
-    fallback_client = BochaSearchClient() if os.environ.get('BOCHA_API_KEY') else None
-    place_term, specialty_term = _bocha_query_terms(request, directions)
-    search_queries = [
-        f'{place_term} {specialty_term} hospital official website',
-        f'{place_term} {specialty_term} top hospital',
-        f'{place_term} hospital {specialty_term} department',
-        f'China {specialty_term} hospital official website',
-        f'{request.location.city} {request.query} 医院 排名',
-        f'{request.location.city} {" ".join(directions)} 医院 官方',
-        f'{request.location.city} 三甲 {" ".join(directions)} 医院',
-        f'{request.location.city} 心脏中心 医院 官方',
-        f'{request.location.city} 省人民医院 {specialty_term} 官方',
-        f'{request.location.city} 市人民医院 {specialty_term} 官方',
-        f'{request.location.city} 国家区域医疗中心 {specialty_term}',
-        f'{request.location.city} {request.query} 医院 官方 挂号',
-    ]
-    if len(local_results) >= 10:
-        # Local coverage is not proof that recall is complete. Keep one
-        # low-cost web recall query to discover newer or omitted hospitals.
-        search_queries = (f'{place_term} {specialty_term} hospital official website',)
-    else:
+    search_results = []
+    results = local_results
+    if len(local_results) < 10:
+        search_client = AnySearchClient()
+        fallback_client = BochaSearchClient() if os.environ.get('BOCHA_API_KEY') else None
         place_term, specialty_term = _bocha_query_terms(request, directions)
         search_queries = compact_search_queries(request.location.city or place_term, specialty_term, request.query)
-    search_results = []
-    for query in search_queries:
-        result = await _cached_external_search(search_client, query, fallback_client)
-        if result is not None:
-            search_results.append(result)
-    if search_results and not any(result.available for result in search_results) and not local_results:
-        return {
-            'status': 'SEARCH_UNAVAILABLE',
-            'search_mode': '本地资料',
-            'directions': directions,
-            'scope': request.scope,
-            'results': [],
-            'sources': [],
-            'fetched_at': None,
-        }
+        for query in search_queries:
+            result = await _cached_external_search(search_client, query, fallback_client)
+            if result is not None:
+                search_results.append(result)
+        if search_results and not any(result.available for result in search_results) and not local_results:
+            return {
+                'status': 'SEARCH_UNAVAILABLE',
+                'search_mode': '本地资料',
+                'directions': directions,
+                'scope': request.scope,
+                'results': [],
+                'sources': [],
+                'fetched_at': None,
+            }
 
-    documents = [document for result in search_results for document in result.documents]
-    candidates = [
-        candidate
-        for document in documents
-        if (candidate := candidate_from_document(
-            document,
+        documents = [document for result in search_results for document in result.documents]
+        external_candidates = [
+            candidate
+            for document in documents
+            if (candidate := candidate_from_document(
+                document,
+                location=request.location,
+                require_location_evidence=request.scope in {'district', 'city'},
+                require_district_evidence=request.scope == 'district',
+            )) is not None
+        ]
+        database_rows = tertiary_rows()
+        tertiary_names = {normalize_hospital_name(str(row.get('canonical_name') or '')) for row in database_rows}
+        external_candidates = [
+            candidate for candidate in external_candidates
+            if normalize_hospital_name(candidate.name) in tertiary_names
+        ]
+        external_candidates = _apply_database_identity(external_candidates, database_rows)
+        official_evidence_items = _official_specialty_evidence_items(
+            external_candidates,
+            directions,
+            database_rows,
+        )
+        if official_evidence_items:
+            background_tasks.add_task(
+                _persist_official_specialty_evidence_safely,
+                official_evidence_items,
+                tertiary_database_path(),
+            )
+        candidates = await run_in_threadpool(
+            lambda: _attach_ranking_evidence(
+                merge_hospital_candidates([*local_candidates, *external_candidates]), directions,
+            ),
+        )
+        ranked_candidates = await run_in_threadpool(
+            rank_candidates,
+            candidates,
+            directions=directions,
             location=request.location,
-            require_location_evidence=request.scope in {'district', 'city'},
-            require_district_evidence=request.scope == 'district',
-        )) is not None
-    ]
-    tertiary_names = {normalize_hospital_name(str(row.get('canonical_name') or '')) for row in tertiary_rows()}
-    candidates = [candidate for candidate in candidates if normalize_hospital_name(candidate.name) in tertiary_names]
-    candidates = await run_in_threadpool(
-        lambda: _attach_ranking_evidence(merge_hospital_candidates(candidates), directions),
-    )
-    if len(candidates) < 10:
-        candidates.extend(local_candidates)
-        candidates = merge_hospital_candidates(candidates)
-    results = await run_in_threadpool(
-        rank_candidates,
-        candidates,
-        directions=directions,
-        location=request.location,
-        location_level=request.location_level,
-        scope=request.scope,
-        profile_key=profile_key,
-    )
+            location_level=request.location_level,
+            scope=request.scope,
+            profile_key=profile_key,
+            limit=None,
+            ignore_geography=request.ignore_geography,
+        )
+        results = _prioritize_local_results(local_results, ranked_candidates)
     synthesized = await run_in_threadpool(
         synthesize_hospital_results,
         query=request.query,
@@ -523,6 +815,7 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         )
     if synthesized is not None:
         results = synthesized
+    results = [normalize_result_specialty_score(result) for result in results]
     # Keep verified hospital website data attached after optional result
     # synthesis. The model may omit fields that are not part of its prose.
     database_rows = tertiary_rows()
@@ -534,8 +827,8 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         )
         if database_row:
             result['official_website_url'] = (
-                result.get('official_website_url')
-                or _safe_http_url(database_row.get('official_domain'), add_scheme=True)
+                _safe_http_url(database_row.get('official_domain'), add_scheme=True)
+                or result.get('official_website_url')
             )
             result['wechat_appointment'] = result.get('wechat_appointment') or f"{result.get('name')}公众号"
     if not results:
@@ -591,6 +884,27 @@ async def realtime_hospital_search(request: RealtimeSearchRequest):
         'fallback_scope': _WIDER_SCOPE.get(request.scope) if len(results) < 10 else None,
         'fallback_message': '当前区域医院较少，可切换更高一级区域查看。' if len(results) < 10 and request.scope != 'national' else None,
         'processing_notice': processing_notice,
+    }
+
+
+@app.get('/v1/hospital-directory')
+async def hospital_directory(
+    page: int = Query(default=1, ge=1, le=10000),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    """Return the local hospital directory in comprehensive-score order."""
+    results = await run_in_threadpool(_build_directory_results)
+    results = sorted(results, key=_directory_sort_key)
+    start = (page - 1) * page_size
+    end = start + page_size
+    fetched_dates = [str(item.get('fetched_at') or '') for item in results if item.get('fetched_at')]
+    return {
+        'status': 'OK',
+        'page': page,
+        'page_size': page_size,
+        'total': len(results),
+        'fetched_at': max(fetched_dates) if fetched_dates else None,
+        'results': results[start:end],
     }
 
 

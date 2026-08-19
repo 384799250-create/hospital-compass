@@ -2,9 +2,16 @@
 
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 
-import { AIMatchResponse, MatchApiError, MatchResponse, RealtimeHospitalDetail, RealtimeSearchResponse, SymptomClarificationAnswer, SymptomClarificationResponse, TriageResponse, aiMatchHospitals, clarifySymptoms, getRealtimeHospitalDetail, matchHospitals, realtimeSearchHospitals, triageSymptoms } from '../lib/api';
-import { addFavorite, clearProfile, getProfile, removeFavorite } from '../lib/local-profile';
+import { AIMatchResponse, FeedbackCategory, MatchApiError, MatchResponse, RealtimeHospitalDetail, RealtimeSearchResponse, SymptomClarificationAnswer, SymptomClarificationResponse, TriageResponse, aiMatchHospitals, clarifySymptoms, getRealtimeHospitalDetail, matchHospitals, realtimeSearchHospitals, triageSymptoms } from '../lib/api';
+import { addFavorite, clearProfile, FavoriteHospital, getProfile, removeFavorite } from '../lib/local-profile';
+import { formatLikelihood } from '../lib/formatters';
+import { getDisplayedResultScore } from '../lib/result-score';
+import { FavoriteDrawer, FavoriteHospitalList } from './favorite-drawer';
+import FeedbackAdminPage from './feedback-admin';
+import FeedbackDialog from './feedback-dialog';
 import GuidedIntake, { GuidedSearchInput } from './guided-intake';
+import UsageGuidePage from './usage-guide';
+import HospitalDirectoryPage from './hospital-directory';
 import styles from './page.module.css';
 import provinceData from '../data/province.json';
 import cityData from '../data/city.json';
@@ -12,6 +19,10 @@ import areaData from '../data/area.json';
 
 const FALLBACK_COPY = '匹配服务暂时不可用。请查询当地卫生健康部门地址与医院官方站点；如情况紧急，请立即急诊或拨打 120。';
 const CUSTOM_CLARIFICATION_OPTION = '以上都不符合，我自己填写';
+
+function realtimeCacheKey(direction: string | null | undefined, scope: RealtimeSearchResponse['scope'], ignoreGeography = false) {
+  return `${direction?.trim() || 'default'}:${scope}:${ignoreGeography ? 'no-geo' : 'geo'}`;
+}
 
 const SCORE_LABELS: Record<string, string> = {
   specialty: '专科实力',
@@ -23,6 +34,44 @@ const SCORE_LABELS: Record<string, string> = {
   accessibility: '就医便利性',
   official_service: '官方服务信息',
 };
+
+const SCOPE_LABELS: Record<RealtimeSearchResponse['scope'], string> = {
+  district: '区/县级',
+  city: '市级',
+  province: '省级',
+  national: '全国',
+};
+
+type DisplayEvidence = NonNullable<RealtimeSearchResponse['results'][number]['specialty_evidence']>[number] & {
+  source_urls?: string[];
+};
+
+function normalizeSpecialtyCapabilityLevel(value: string | undefined) {
+  const level = value?.trim() || '';
+  return /^(国家级|国家级重点|国家临床重点|国家重点)/.test(level) ? '国家级重点' : level;
+}
+
+function mergeSpecialtyCapabilityEvidence(items: DisplayEvidence[]) {
+  const grouped = new Map<string, DisplayEvidence>();
+  for (const item of items) {
+    const specialty = item.department?.trim() || item.specialty?.trim() || '';
+    const level = normalizeSpecialtyCapabilityLevel(item.strength_level);
+    const key = `${specialty}|${level}`;
+    const sourceUrls = [...new Set([...(item.source_urls ?? []), item.source?.trim() || ''].filter(Boolean))];
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, { ...item, strength_level: level, source_urls: sourceUrls });
+      continue;
+    }
+    grouped.set(key, {
+      ...existing,
+      source_urls: [...new Set([...(existing.source_urls ?? []), ...sourceUrls])],
+      diagnosis_scope: existing.diagnosis_scope || item.diagnosis_scope,
+      verification_status: [...new Set([existing.verification_status, item.verification_status].filter(Boolean))].join('、'),
+    });
+  }
+  return [...grouped.values()];
+}
 
 function formatScoreText(value: string) {
   return value
@@ -101,14 +150,17 @@ export default function Page() {
   const [district, setDistrict] = useState('');
   const [scope, setScope] = useState<RealtimeSearchResponse['scope']>('district');
   const [realtimeConsent, setRealtimeConsent] = useState(true);
+  const [ignoreGeography, setIgnoreGeography] = useState(false);
   const [realtimeResponse, setRealtimeResponse] = useState<RealtimeSearchResponse | null>(null);
-  const realtimeScopeCacheRef = useRef<Partial<Record<RealtimeSearchResponse['scope'], RealtimeSearchResponse>>>({});
+  const realtimeScopeCacheRef = useRef<Record<string, RealtimeSearchResponse>>({});
+  const [districtSelectionRequired, setDistrictSelectionRequired] = useState(false);
   const [triageResponse, setTriageResponse] = useState<TriageResponse | null>(null);
   const [clarification, setClarification] = useState<SymptomClarificationResponse | null>(null);
   const [clarificationAnswers, setClarificationAnswers] = useState<SymptomClarificationAnswer[]>([]);
   const [clarificationChoice, setClarificationChoice] = useState('');
   const [clarificationCustomAnswer, setClarificationCustomAnswer] = useState('');
   const [selectedDirection, setSelectedDirection] = useState<string | null>(null);
+  const [selectedResultDirectionKey, setSelectedResultDirectionKey] = useState<string | null>(null);
   const [hospitalTiers, setHospitalTiers] = useState<Array<'tertiary_a'>>(['tertiary_a']);
   const [realtimeLoading, setRealtimeLoading] = useState(false);
   const [scopeSwitching, setScopeSwitching] = useState(false);
@@ -117,14 +169,54 @@ export default function Page() {
   const [locating, setLocating] = useState(false);
   const [detail, setDetail] = useState<RealtimeHospitalDetail | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
+  const [favoriteHospitals, setFavoriteHospitals] = useState<FavoriteHospital[]>([]);
+  const [favoriteDrawerOpen, setFavoriteDrawerOpen] = useState(false);
+  const [favoritePageOpen, setFavoritePageOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const acknowledgementRef = useRef<HTMLButtonElement>(null);
   const emergencyDialogRef = useRef<HTMLDialogElement>(null);
   const triagePanelRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    setFavorites(getProfile().favorites);
+    const profile = getProfile();
+    setFavorites(profile.favorites);
+    setFavoriteHospitals(profile.favoriteHospitals);
   }, []);
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/feedback-admin') {
+    return <FeedbackAdminPage />;
+  }
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/guide') {
+    return <UsageGuidePage />;
+  }
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/directory') {
+    return <HospitalDirectoryPage />;
+  }
+
+  useEffect(() => {
+    const missingIds = favorites.filter((id) => !favoriteHospitals.some((hospital) => hospital.id === id));
+    if (!missingIds.length) return;
+    let cancelled = false;
+    void Promise.all(missingIds.map(async (id) => {
+      try {
+        return favoriteFromDetail(await getRealtimeHospitalDetail(id));
+      } catch {
+        return null;
+      }
+    })).then((snapshots) => {
+      if (cancelled) return;
+      let profile = getProfile();
+      for (const snapshot of snapshots) {
+        if (snapshot) profile = addFavorite(snapshot);
+      }
+      setFavorites(profile.favorites);
+      setFavoriteHospitals(profile.favoriteHospitals);
+    });
+    return () => { cancelled = true; };
+  }, [favorites, favoriteHospitals]);
 
   useEffect(() => {
     if (!showEmergency) return;
@@ -176,26 +268,43 @@ export default function Page() {
     }
   }
 
-  async function searchRealtime(nextScope: RealtimeSearchResponse['scope'], confirmedDirection = selectedDirection, preserveCurrent = false) {
+  async function searchRealtime(
+    nextScope: RealtimeSearchResponse['scope'],
+    confirmedDirection = selectedDirection,
+    preserveCurrent = false,
+    nextDistrict = district,
+    nextCity = realtimeCity,
+    nextProvince = province,
+    isScopeSwitch = false,
+    nextIgnoreGeography = ignoreGeography,
+  ) {
+    const normalizedDistrict = nextDistrict.trim();
+    const normalizedCity = nextCity.trim();
+    const normalizedProvince = nextProvince.trim();
+    if (nextScope === 'district' && !normalizedDistrict) {
+      setDistrictSelectionRequired(true);
+      return;
+    }
     setRealtimeError(null);
-    setScopeSwitching(preserveCurrent);
+    setScopeSwitching(isScopeSwitch);
     if (!preserveCurrent) {
       setRealtimeResponse(null);
       setDetail(null);
     }
     setRealtimeLoading(true);
     try {
-      const result = await realtimeSearchHospitals({
+      const { result, scope: resolvedScope } = await searchRealtimeWithFallback({
         query: realtimeQuery,
-        location: { province: province.trim(), city: realtimeCity.trim(), district: district.trim() || realtimeCity.trim() },
-        location_level: district.trim() ? 'district' : 'city',
-        scope: nextScope,
-        ai_consent: realtimeConsent,
-        confirmed_direction: confirmedDirection || undefined,
-        hospital_tiers: hospitalTiers,
+        location: { province: normalizedProvince, city: normalizedCity, district: normalizedDistrict || normalizedCity },
+        location_level: normalizedDistrict ? 'district' : 'city',
+        initialScope: nextScope,
+        confirmedDirection,
+        aiConsent: realtimeConsent,
+        ignoreGeography: nextIgnoreGeography,
       });
+      setScope(resolvedScope);
       setRealtimeResponse(result);
-      realtimeScopeCacheRef.current[nextScope] = result;
+      setDistrictSelectionRequired(false);
     } catch (requestError) {
       setRealtimeError(requestError instanceof MatchApiError && requestError.status === 503
         ? '公开资料搜索暂时不可用，请稍后重试。'
@@ -204,6 +313,51 @@ export default function Page() {
       setScopeSwitching(false);
       setRealtimeLoading(false);
     }
+  }
+
+  async function searchRealtimeWithFallback({
+    query: nextQuery,
+    location,
+    location_level,
+    initialScope,
+    confirmedDirection,
+    aiConsent,
+    ignoreGeography: nextIgnoreGeography,
+  }: {
+    query: string;
+    location: { province: string; city: string; district: string };
+    location_level: 'city' | 'district';
+    initialScope: RealtimeSearchResponse['scope'];
+    confirmedDirection: string | null | undefined;
+    aiConsent: boolean;
+    ignoreGeography: boolean;
+  }) {
+    let currentScope = initialScope;
+    const visitedScopes = new Set<RealtimeSearchResponse['scope']>();
+
+    while (!visitedScopes.has(currentScope)) {
+      visitedScopes.add(currentScope);
+      const cacheKey = realtimeCacheKey(confirmedDirection, currentScope, nextIgnoreGeography);
+      const cachedResponse = realtimeScopeCacheRef.current[cacheKey];
+      const result = cachedResponse ?? await realtimeSearchHospitals({
+        query: nextQuery,
+        location,
+        location_level,
+        scope: currentScope,
+        ai_consent: aiConsent,
+        confirmed_direction: confirmedDirection || undefined,
+        hospital_tiers: hospitalTiers,
+        ignore_geography: nextIgnoreGeography,
+      });
+      realtimeScopeCacheRef.current[cacheKey] = result;
+
+      if (result.status !== 'NO_RESULTS' || !result.fallback_scope || visitedScopes.has(result.fallback_scope)) {
+        return { result, scope: currentScope };
+      }
+      currentScope = result.fallback_scope;
+    }
+
+    throw new Error('Unable to resolve a hospital search scope.');
   }
 
   async function submitRealtime(event: FormEvent<HTMLFormElement>) {
@@ -221,6 +375,7 @@ export default function Page() {
       realtimeScopeCacheRef.current = {};
       setTriageResponse(null);
       setSelectedDirection(null);
+      setSelectedResultDirectionKey(null);
       setClarificationAnswers([]);
       setClarificationChoice('');
       setClarificationCustomAnswer('');
@@ -228,7 +383,8 @@ export default function Page() {
       try {
         const triage = await triageSymptoms({ query: realtimeQuery, ai_consent: true });
         setTriageResponse(triage);
-        const needsClarification = triage.directions.length !== 1 || triage.directions[0].likelihood === '待评估';
+        const needsClarification = !triage.explicit_disease_input
+          && (triage.directions.length !== 1 || triage.directions[0].likelihood === '待评估');
         if (needsClarification) {
           const next = await clarifySymptoms({ query: realtimeQuery, answers: [], ai_consent: true });
           if (next.status === 'NEEDS_CLARIFICATION') setClarification(next);
@@ -266,22 +422,53 @@ export default function Page() {
   }
 
   async function confirmDirection(direction: TriageResponse['directions'][number]) {
-    realtimeScopeCacheRef.current = {};
     setSelectedDirection(direction.department);
+    setSelectedResultDirectionKey(direction.key);
     await searchRealtime(scope, direction.department);
   }
 
   async function switchRealtimeScope(nextScope: RealtimeSearchResponse['scope']) {
     setScope(nextScope);
-    if (nextScope === realtimeResponse?.scope && !realtimeLoading) return;
-    const cachedResponse = realtimeScopeCacheRef.current[nextScope];
-    if (cachedResponse) {
-      setRealtimeError(null);
-      setDetail(null);
-      setRealtimeResponse(cachedResponse);
+    if (nextScope === 'district' && !district.trim()) {
+      setDistrictSelectionRequired(true);
       return;
     }
-    await searchRealtime(nextScope, selectedDirection, true);
+    if (nextScope === realtimeResponse?.scope && !realtimeLoading) return;
+    await searchRealtime(nextScope, selectedDirection, true, district, realtimeCity, province, true);
+  }
+
+  async function switchResultDirection(direction: TriageResponse['directions'][number]) {
+    if (direction.key === selectedResultDirectionKey && realtimeResponse) return;
+    setSelectedDirection(direction.department);
+    setSelectedResultDirectionKey(direction.key);
+    setDetail(null);
+    await searchRealtime(scope, direction.department, true);
+  }
+
+  function selectResultProvince(value: string) {
+    realtimeScopeCacheRef.current = {};
+    setProvince(value);
+    setRealtimeCity('');
+    setDistrict('');
+    setDistrictSelectionRequired(false);
+    setScope('city');
+  }
+
+  function selectResultCity(value: string) {
+    realtimeScopeCacheRef.current = {};
+    setRealtimeCity(value);
+    setDistrict('');
+    setDistrictSelectionRequired(false);
+    setScope('city');
+    if (value) void searchRealtime('city', selectedDirection, true, '', value, province);
+  }
+
+  function selectResultDistrict(value: string) {
+    realtimeScopeCacheRef.current = {};
+    setDistrict(value);
+    if (value && (districtSelectionRequired || scope === 'district')) {
+      void searchRealtime('district', selectedDirection, true, value, realtimeCity, province);
+    }
   }
 
   function locateUser() {
@@ -353,13 +540,83 @@ export default function Page() {
   function clearLocalData() {
     clearProfile();
     setFavorites([]);
+    setFavoriteHospitals([]);
+    setFavoriteDrawerOpen(false);
   }
 
-  function toggleFavorite(hospitalId: string) {
+  function toggleFavoriteId(hospitalId: string) {
     const profile = favorites.includes(hospitalId)
       ? removeFavorite(hospitalId)
       : addFavorite(hospitalId);
     setFavorites(profile.favorites);
+    setFavoriteHospitals(profile.favoriteHospitals);
+  }
+
+  function favoriteFromResult(hospital: RealtimeSearchResponse['results'][number]): FavoriteHospital {
+    return {
+      id: hospital.id,
+      name: hospital.name,
+      city: hospital.city,
+      tier: hospital.tier || '',
+      address: hospital.address || '',
+      score: Number.isFinite(hospital.score) ? hospital.score : null,
+      department: hospital.department || realtimeResponse?.directions.join('、') || '',
+      officialWebsiteUrl: hospital.official_website_url || null,
+    };
+  }
+
+  function favoriteFromDetail(hospital: RealtimeHospitalDetail): FavoriteHospital {
+    return {
+      id: hospital.id,
+      name: hospital.name,
+      city: hospital.city,
+      tier: '',
+      address: hospital.address || '',
+      score: null,
+      department: hospital.departments.join('、'),
+      officialWebsiteUrl: hospital.official_website_url || null,
+    };
+  }
+
+  function toggleFavoriteHospital(hospital: RealtimeSearchResponse['results'][number]) {
+    const profile = favorites.includes(hospital.id)
+      ? removeFavorite(hospital.id)
+      : addFavorite(favoriteFromResult(hospital));
+    setFavorites(profile.favorites);
+    setFavoriteHospitals(profile.favoriteHospitals);
+  }
+
+  function removeFavoriteHospital(hospitalId: string) {
+    const profile = removeFavorite(hospitalId);
+    setFavorites(profile.favorites);
+    setFavoriteHospitals(profile.favoriteHospitals);
+    if (detail?.id === hospitalId) setDetail(null);
+  }
+
+  async function openFavoriteDetail(hospitalId: string) {
+    const snapshot = favoriteHospitals.find((hospital) => hospital.id === hospitalId);
+    setFavoriteDrawerOpen(false);
+    setFavoritePageOpen(true);
+    if (snapshot) {
+      setDetail({
+        id: snapshot.id,
+        name: snapshot.name,
+        city: snapshot.city,
+        address: snapshot.address,
+        introduction: null,
+        departments: snapshot.department ? snapshot.department.split('、') : [],
+        doctors: [],
+        registration_url: null,
+        official_website_url: snapshot.officialWebsiteUrl,
+        sources: [],
+        fetched_at: new Date().toISOString(),
+      });
+    }
+    try {
+      setDetail(await getRealtimeHospitalDetail(hospitalId));
+    } catch {
+      setRealtimeError('暂时无法加载医院详情，请稍后重试。');
+    }
   }
 
   function useQuickQuery(value: string) {
@@ -367,6 +624,7 @@ export default function Page() {
     setRealtimeQuery(value);
     setTriageResponse(null);
     setSelectedDirection(null);
+    setSelectedResultDirectionKey(null);
     setRealtimeResponse(null);
     realtimeScopeCacheRef.current = {};
   }
@@ -398,19 +656,63 @@ export default function Page() {
     setProvince(value);
     setRealtimeCity('');
     setDistrict('');
+    setDistrictSelectionRequired(false);
     setScope('province');
   };
   const selectCity = (value: string) => {
     realtimeScopeCacheRef.current = {};
     setRealtimeCity(value);
     setDistrict('');
+    setDistrictSelectionRequired(false);
     setScope('city');
   };
   const selectDistrict = (value: string) => {
     realtimeScopeCacheRef.current = {};
     setDistrict(value);
+    setDistrictSelectionRequired(false);
     setScope(value ? 'district' : 'city');
   };
+  const selectedResultDirection = triageResponse?.directions.find((item) => item.key === selectedResultDirectionKey) ?? null;
+  const currentResultAddress = [province, realtimeCity, district].filter(Boolean).join(' · ') || '尚未选择地址';
+  const renderResultLocation = () => <section className={styles.resultLocation} aria-label="当前选择的地址">
+    <div className={styles.resultLocationSummary}>
+      <span>当前选择的地址</span>
+      <strong>{currentResultAddress}</strong>
+    </div>
+    <div className={styles.resultLocationControls}>
+      <label className={styles.resultLocationSelect}>
+        <span>省份</span>
+        <select aria-label="选择省份" value={province} onChange={(event) => selectResultProvince(event.target.value)}>
+          <option value="">请选择省份</option>
+          {Object.keys(LOCATION_TREE).map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+      </label>
+      <label className={styles.resultLocationSelect}>
+        <span>城市</span>
+        <select aria-label="选择城市" value={realtimeCity} onChange={(event) => selectResultCity(event.target.value)} disabled={!province}>
+          <option value="">{province ? '请选择城市' : '请先选择省份'}</option>
+          {cityOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+      </label>
+      <label className={styles.resultLocationSelect}>
+        <span>区县</span>
+        <select aria-label="选择区县" value={district} onChange={(event) => selectResultDistrict(event.target.value)} disabled={!realtimeCity}>
+          <option value="">{realtimeCity ? '请选择区县' : '请先选择城市'}</option>
+          {districtOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+      </label>
+    </div>
+    <label className={styles.locationPreference} htmlFor="ignore-geography">
+      <input id="ignore-geography" type="checkbox" checked={ignoreGeography} onChange={(event) => {
+        const nextValue = event.target.checked;
+        setIgnoreGeography(nextValue);
+        realtimeScopeCacheRef.current = {};
+        void searchRealtime(scope, selectedDirection, true, district, realtimeCity, province, true, nextValue);
+      }} />
+      <span>不考虑地理位置</span>
+    </label>
+    {districtSelectionRequired && <p className={styles.districtSelectionNotice} role="status">请先在当前地址中选择区县，再查看区/县级医院名单。当前医院列表会保留。</p>}
+  </section>;
 
   async function completeGuidedSearch(input: GuidedSearchInput) {
     const nextScope = input.district ? 'district' : 'city';
@@ -422,21 +724,24 @@ export default function Page() {
     setScope(nextScope);
     setPriority(input.priority);
     setSelectedDirection(input.direction || null);
+    setSelectedResultDirectionKey(input.triage.directions.find((item) => item.department === input.direction)?.key ?? null);
     setTriageResponse(input.triage);
     setSurface('results');
     setRealtimeError(null);
     setRealtimeLoading(true);
     try {
-      const result = await realtimeSearchHospitals({
+      const { result, scope: resolvedScope } = await searchRealtimeWithFallback({
         query: input.query,
         location: { province: input.province, city: input.city, district: input.district || input.city },
         location_level: input.district ? 'district' : 'city',
-        scope: nextScope,
-        ai_consent: true,
-        confirmed_direction: input.direction || undefined,
-        hospital_tiers: hospitalTiers,
+        initialScope: nextScope,
+        confirmedDirection: input.direction,
+        aiConsent: true,
+        ignoreGeography,
       });
+      setScope(resolvedScope);
       setRealtimeResponse(result);
+      setDistrictSelectionRequired(false);
     } catch (requestError) {
       setRealtimeError(requestError instanceof MatchApiError && requestError.status === 503
         ? '公开资料搜索暂时不可用，请稍后重试。'
@@ -450,10 +755,16 @@ export default function Page() {
   if (surface === 'landing') {
     return <main className={styles.landingPage}>
       <div className={styles.landingTexture} aria-hidden="true"><span /><i /><b /></div>
-      <header className={styles.landingBrand}><span className={styles.brandMark}>+</span><span>医途</span><small>医院信息导航</small></header>
-      <section className={styles.landingHero} aria-labelledby="landing-title">
+      <header className={styles.landingBrand}>
+        <div className={styles.landingIdentity}><span className={styles.brandMark}>+</span><span>医途</span><small>医院信息导航</small></div>
+        <nav className={styles.landingNav} aria-label="首页导航">
+          <a href="/directory">医院目录</a>
+          <a href="/guide">使用说明</a>
+        </nav>
+      </header>
+      <section className={`${styles.landingHero} ${styles.landingHeroCentered}`} aria-labelledby="landing-title">
         <p className={styles.landingEyebrow}>把就医选择，变得清楚一点</p>
-        <h1 id="landing-title">先说清楚症状，<br />再找到合适的医院</h1>
+        <h1 id="landing-title">先说清楚症状<br />再找到合适的医院</h1>
         <p className={styles.landingDescription}>医途会用简单的问题帮你确认疾病方向和推荐科室，再结合所在地整理医院列表与综合评分。</p>
         <button className={styles.landingStart} type="button" onClick={() => setSurface('guided')}>开始使用</button>
       </section>
@@ -465,12 +776,68 @@ export default function Page() {
     return <GuidedIntake onComplete={completeGuidedSearch} onEmergency={(message) => setRealtimeError(message)} onBackToLanding={() => setSurface('landing')} />;
   }
 
+  if (favoritePageOpen) {
+    return <main className={styles.page}>
+      <nav className={styles.nav} aria-label="主导航">
+        <span className={styles.brand}>医途</span>
+        <span>医院信息导航</span>
+        <div className={styles.navLinks} aria-label="页面导航"><a href="#favorites">收藏医院</a></div>
+        <button type="button" className={styles.feedbackNavButton} onClick={() => setFeedbackOpen(true)}>信息反馈</button>
+        <button type="button" className={styles.favoriteNavButton} aria-current="page" onClick={() => setFavoriteDrawerOpen(true)}>收藏夹 <span>{favorites.length}</span></button>
+        <button type="button" className={styles.clearProfile} onClick={clearLocalData}>清除本机数据</button>
+      </nav>
+      <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      <section id="favorites" className={styles.favoritePage} aria-labelledby="favorites-title">
+        <header className={styles.favoritePageHeader}>
+          <div><span>已保存医院</span><h1 id="favorites-title">收藏医院</h1><p>收藏内容仅保存在当前浏览器中。</p></div>
+          <button type="button" onClick={() => setFavoritePageOpen(false)}>返回医院推荐</button>
+        </header>
+        <FavoriteHospitalList favorites={favoriteHospitals} variant="page" onRemove={removeFavoriteHospital} onOpenDetail={(id) => void openFavoriteDetail(id)} />
+        {detail && <section className={styles.favoriteDetail} aria-label={`${detail.name}医院详情`}>
+          <header><div><span>医院详情</span><h2>{detail.name}</h2></div><button type="button" aria-label="关闭医院详情" title="关闭详情" onClick={() => setDetail(null)}>×</button></header>
+          <p>{detail.introduction || '暂无医院简介公开摘要。'}</p>
+          {detail.departments.length ? <p><b>相关科室：</b>{detail.departments.join('、')}</p> : null}
+          <div>{detail.official_website_url && <a href={detail.official_website_url} target="_blank" rel="noreferrer">前往医院官网 ↗</a>}{detail.sources?.[0]?.url && <a href={detail.sources[0].url} target="_blank" rel="noreferrer">查看公开来源 ↗</a>}</div>
+        </section>}
+      </section>
+      <FavoriteDrawer open={favoriteDrawerOpen} favorites={favoriteHospitals} onClose={() => setFavoriteDrawerOpen(false)} onExpand={() => setFavoriteDrawerOpen(false)} onRemove={removeFavoriteHospital} onOpenDetail={(id) => void openFavoriteDetail(id)} />
+    </main>;
+  }
+
   function renderRealtimeCard(hospital: RealtimeSearchResponse['results'][number], index: number) {
-    const breakdown = {
+    const resultScore = getDisplayedResultScore({
+      ...hospital,
+      score_breakdown: {
       ...(hospital.score_breakdown ?? {}),
       official_service: hospital.official_website_url || hospital.registration_url ? 100 : 60,
-    };
+      },
+    }, { ignoreGeography });
+    const breakdown = resultScore.breakdown;
     const isExpanded = detail?.id === hospital.id;
+    const evidenceItems: DisplayEvidence[] = (hospital.specialty_evidence ?? []).filter((evidence, evidenceIndex, allEvidence) => {
+      const evidenceKey = [
+        evidence.year ?? '', evidence.rank ?? evidence.tier ?? '',
+        evidence.specialty?.trim() || evidence.department?.trim() || '',
+        evidence.ranking_source_name?.trim() || evidence.ranking_name?.trim() || '',
+        evidence.strength_level?.trim() || '', evidence.source?.trim() || '',
+      ].join('|');
+      return allEvidence.findIndex((candidate) => [
+        candidate.year ?? '', candidate.rank ?? candidate.tier ?? '',
+        candidate.specialty?.trim() || candidate.department?.trim() || '',
+        candidate.ranking_source_name?.trim() || candidate.ranking_name?.trim() || '',
+        candidate.strength_level?.trim() || '', candidate.source?.trim() || '',
+      ].join('|') === evidenceKey) === evidenceIndex;
+    });
+    const specialtyCapabilityEvidence = mergeSpecialtyCapabilityEvidence(evidenceItems.filter((evidence) => Boolean(
+      (evidence.department?.trim() || evidence.specialty?.trim()) && !evidence.rank,
+    ))).slice(0, 2);
+    const specialtyRankingEvidence = evidenceItems.filter((evidence) => Boolean(
+      evidence.rank && (evidence.department?.trim() || evidence.specialty?.trim()),
+    )).slice(0, 2);
+    const hospitalStrengthEvidence = evidenceItems.filter((evidence) => Boolean(
+      evidence.rank && !(evidence.department?.trim() || evidence.specialty?.trim()),
+    )).slice(0, 1);
+    const hasSpecialtyEvidence = resultScore.hasDirectSpecialtyEvidence;
     const sourceLabel = (source: RealtimeSearchResponse['results'][number]['sources'][number]) => {
       const title = source.title?.trim();
       if (title && title !== hospital.name) return title;
@@ -480,9 +847,50 @@ export default function Page() {
         return '资料来源';
       }
     };
+    const renderEvidenceRows = (items: typeof evidenceItems) => items.map((evidence, evidenceIndex) => {
+        const evidenceSources = [...new Set([...(evidence.source_urls ?? []), evidence.source || hospital.source_urls?.[0] || ''].filter(Boolean))];
+        const sourceName = evidence.ranking_source_name?.trim() || evidence.ranking_name?.trim() || '';
+        const scopeName = evidence.ranking_scope?.trim() || evidence.scope?.trim() || '';
+        const specialtyName = evidence.specialty?.trim() || evidence.department?.trim() || '';
+        const isCapability = Boolean(specialtyName && !evidence.rank);
+        const defaultTitle = specialtyName
+          ? `${scopeName}${specialtyName}专科排名`
+          : `${scopeName || '全国'}综合排名`;
+        const titleText = sourceName || defaultTitle;
+        const evidenceYear = Number(evidence.year) > 0 && !titleText.includes(String(evidence.year)) ? `${evidence.year}年` : '';
+        const evidenceText = isCapability
+          ? `${specialtyName} · ${evidence.strength_level?.trim() || evidence.tier || '公开能力资料'}`
+          : `${evidenceYear}${titleText}${evidence.rank ? `第${evidence.rank}名` : (evidence.tier || '公开资质')}`;
+        return <div key={`${titleText}-${evidence.year || ''}-${evidence.rank || evidence.tier || evidenceIndex}`}>
+          <span>· {evidenceText}</span>
+          {evidenceSources.filter((source) => /^https?:\/\//i.test(source)).map((source) => <a key={source} href={source} target="_blank" rel="noopener noreferrer">查看来源</a>)}
+          {!evidenceSources.some((source) => /^https?:\/\//i.test(source)) && <small>来源待核验</small>}
+          <small>{sourceName ? `来源：${sourceName} · ` : ''}{evidence.verification_status || '待核验'}</small>
+        </div>;
+      });
+    const renderEvidence = (
+      title: string,
+      items: typeof evidenceItems,
+      className = '',
+    ) => items.length ? <div className={`${styles.specialtyEvidence} ${className}`.trim()}>
+      <strong>{title}</strong>
+      {renderEvidenceRows(items)}
+    </div> : null;
+    const renderSpecialtyEvidence = () => (specialtyCapabilityEvidence.length || specialtyRankingEvidence.length) ? (
+      <div className={styles.specialtyEvidence} aria-label="专科依据">
+        {specialtyCapabilityEvidence.length ? <div className={styles.evidenceGroup}>
+          <strong>专科能力依据</strong>
+          {renderEvidenceRows(specialtyCapabilityEvidence)}
+        </div> : null}
+        {specialtyRankingEvidence.length ? <div className={styles.evidenceGroup}>
+          <strong>专科排名依据</strong>
+          {renderEvidenceRows(specialtyRankingEvidence)}
+        </div> : null}
+      </div>
+    ) : null;
     return (
       <article className={styles.card} key={hospital.id}>
-        <div className={styles.cardRank}><span>第 {index + 1} 名</span><b>综合评分 {hospital.score}</b></div>
+        <div className={styles.cardRank}><span>第 {index + 1} 名</span><b>综合评分 {resultScore.score}</b></div>
         <div className={styles.cardIdentity}>
           <div>
             <h3>{hospital.name}</h3>
@@ -495,37 +903,30 @@ export default function Page() {
           <div><dt>推荐科室</dt><dd>{realtimeResponse?.directions.length ? realtimeResponse.directions.join('、') : '暂无公开科室资料'}</dd></div>
           <div><dt>医院地址</dt><dd>{hospital.address || hospital.city || '暂无公开地址资料'}</dd></div>
         </dl>
-        {hospital.specialty_evidence?.length ? <div className={styles.specialtyEvidence}>
-          <strong>权威专科依据</strong>
-          {hospital.specialty_evidence.slice(0, 2).map((evidence, evidenceIndex) => {
-            const evidenceSource = evidence.source || hospital.source_urls?.[0] || '';
-            const sourceIsLink = /^https?:\/\//i.test(evidenceSource);
-            const evidenceYear = Number(evidence.year) > 0 ? `${evidence.year}年` : '年';
-            const evidenceRank = evidence.rank ? `第${evidence.rank}名` : (evidence.tier || '公开资质');
-            return <div key={`${evidenceSource || 'evidence'}-${evidence.year || evidenceIndex}`}>
-              <span>· {evidenceYear}{evidenceRank}</span>
-              {sourceIsLink ? <a href={evidenceSource} target="_blank" rel="noopener noreferrer">查看来源</a> : <small>来源待核验</small>}
-              <small>{evidence.verification_status || '待核验'}</small>
-            </div>;
-          })}
-        </div> : null}
+        {renderSpecialtyEvidence()}
+        {renderEvidence('医院综合实力依据', hospitalStrengthEvidence, styles.hospitalStrengthEvidence)}
         <details className={styles.scoreDetails}>
           <summary><span>评分详情</span><span className={styles.scoreToggle} aria-hidden="true" /></summary>
           <dl className={styles.scoreGrid}>
             {Object.entries(breakdown).map(([key, value]) => {
               const score = Math.max(0, Math.min(100, Number(value) || 0));
-              const color = score < 60 ? '#b4473d' : score < 80 ? '#c27b27' : '#1b786e';
+              const missingSpecialtyEvidence = key === 'specialty' && !hasSpecialtyEvidence;
+              const ringScore = score;
+              const color = ringScore < 60 ? '#b4473d' : ringScore < 80 ? '#c27b27' : '#1b786e';
               const ringStyle = { '--score-color': color } as CSSProperties;
               const label = SCORE_LABELS[key] || '综合评分';
-              const displayText = score === 0 ? (key === 'specialty' ? '暂无排名' : ['hospital_info', 'official_service'].includes(key) ? '暂无信息' : '0.0') : score.toFixed(1);
+              const displayText = score === 0
+                ? (['hospital_info', 'official_service'].includes(key) ? '暂无信息' : '0.0')
+                : score.toFixed(1);
               const isEmpty = score === 0 && displayText !== '0.0';
-              return <div key={key}><dd style={ringStyle} aria-label={`${label} ${isEmpty ? displayText : `${score.toFixed(1)} 分`}`}><svg className={styles.scoreRing} viewBox="0 0 56 56" aria-hidden="true"><circle className={styles.scoreRingTrack} cx="28" cy="28" r="24" pathLength="100" /><circle className={styles.scoreRingValue} cx="28" cy="28" r="24" pathLength="100" strokeDasharray={`${score} ${100 - score}`} /></svg><span className={isEmpty ? styles.scoreRingEmpty : undefined}>{displayText}</span></dd><dt>{label}</dt></div>;
+              const evidenceState = missingSpecialtyEvidence ? '，暂无直接专科依据' : '';
+              return <div key={key}><dd style={ringStyle} aria-label={`${label} ${isEmpty ? displayText : `${score.toFixed(1)} 分`}${evidenceState}`}><svg className={styles.scoreRing} viewBox="0 0 56 56" aria-hidden="true"><circle className={styles.scoreRingTrack} cx="28" cy="28" r="24" pathLength="100" /><circle className={styles.scoreRingValue} cx="28" cy="28" r="24" pathLength="100" strokeDasharray={`${ringScore} ${100 - ringScore}`} /></svg><span className={isEmpty ? styles.scoreRingEmpty : undefined}>{displayText}</span></dd><dt>{label}{missingSpecialtyEvidence ? <small className={styles.specialtyEvidenceMissing}>暂无直接专科依据</small> : null}</dt></div>;
             })}
           </dl>
           <div className={styles.sourceLinks}>
             <a href={hospital.sources?.[0]?.url || 'https://y.dxy.cn/hospital/'} target="_blank" rel="noreferrer">查看公开来源 ↗</a>
-            {hospital.official_website_url && <a href={hospital.official_website_url} target="_blank" rel="noreferrer">前往官方挂号服务 ↗</a>}
-            <span className={styles.appointmentMethod}>预约方式：{hospital.wechat_appointment || `${hospital.name}公众号`}</span>
+            {hospital.official_website_url && <a href={hospital.official_website_url} target="_blank" rel="noreferrer">前往医院官网 ↗</a>}
+            <span className={styles.appointmentMethod}>预约挂号方式：{hospital.wechat_appointment || `${hospital.name}公众号`}</span>
           </div>
         </details>
         <div className={styles.cardActions}>
@@ -535,7 +936,7 @@ export default function Page() {
             className={styles.saveAction}
             aria-pressed={favorites.includes(hospital.id)}
             aria-label={`${favorites.includes(hospital.id) ? '取消收藏' : '收藏'} ${hospital.name}`}
-            onClick={() => toggleFavorite(hospital.id)}
+            onClick={() => toggleFavoriteHospital(hospital)}
           >
             {favorites.includes(hospital.id) ? '已收藏' : '收藏医院'}
           </button>
@@ -558,16 +959,48 @@ export default function Page() {
           </div>
           <div className={styles.detailFooter}>
             <a href={detail.sources?.[0]?.url || 'https://y.dxy.cn/hospital/'} target="_blank" rel="noreferrer">查看公开来源 ↗</a>
-            {detail.official_website_url && <a href={detail.official_website_url} target="_blank" rel="noreferrer">前往官方挂号服务 ↗</a>}
-            <span className={styles.appointmentMethod}>预约方式：{detail.wechat_appointment || `${detail.name}公众号`}</span>
+            {detail.official_website_url && <a href={detail.official_website_url} target="_blank" rel="noreferrer">前往医院官网 ↗</a>}
+            <span className={styles.appointmentMethod}>预约挂号方式：{detail.wechat_appointment || `${detail.name}公众号`}</span>
           </div>
         </section>}
       </article>
     );
   }
 
+  const displayedRealtimeResults = realtimeResponse?.results
+    ? (ignoreGeography
+      ? [...realtimeResponse.results].sort((left, right) => {
+        const displayedScore = (hospital: RealtimeSearchResponse['results'][number]) => getDisplayedResultScore({
+          ...hospital,
+          score_breakdown: {
+            ...(hospital.score_breakdown ?? {}),
+            official_service: hospital.official_website_url || hospital.registration_url ? 100 : 60,
+          },
+        }, { ignoreGeography }).score;
+        return displayedScore(right) - displayedScore(left);
+      })
+      : realtimeResponse.results)
+    : [];
+
   const legacyRealtimeResponse = realtimeResponse;
   const legacyDetail = detail;
+  const scopeChangeInProgress = scopeSwitching && realtimeLoading;
+  const heroContext = [
+    realtimeResponse?.directions?.join('、'),
+    [province, realtimeCity].filter(Boolean).join(' · '),
+    realtimeResponse?.scope ? SCOPE_LABELS[realtimeResponse.scope] : '',
+  ].filter(Boolean);
+
+  function renderScopeSwitchStatus() {
+    if (!scopeChangeInProgress) return null;
+    return <div className={styles.scopeSwitchStatus} role="status" aria-live="polite" aria-atomic="true">
+      <span className={styles.scopeSwitchSpinner} aria-hidden="true" />
+      <div>
+        <strong>正在切换到{SCOPE_LABELS[scope]}排名</strong>
+        <p>保留当前结果，新的医院范围正在刷新</p>
+      </div>
+    </div>;
+  }
 
   return (
     <main className={styles.page} inert={showEmergency}>
@@ -575,25 +1008,30 @@ export default function Page() {
       <nav className={styles.nav} aria-label="主导航">
         <span className={styles.brand}>医途</span>
         <span>医院信息导航</span>
-        <div className={styles.navLinks} aria-label="页面导航"><a href="#match">智能匹配</a><a href="#results">医院目录</a><a href="#guide">使用说明</a></div>
+        <div className={styles.navLinks} aria-label="页面导航"><a href="#match">智能匹配</a><a href="/directory">医院目录</a><a href="/guide">使用说明</a></div>
+        <button type="button" className={styles.feedbackNavButton} onClick={() => setFeedbackOpen(true)}>信息反馈</button>
+        <button type="button" className={styles.favoriteNavButton} onClick={() => setFavoriteDrawerOpen(true)}>收藏夹 <span>{favorites.length}</span></button>
         <button type="button" className={styles.clearProfile} onClick={clearLocalData}>清除本机数据</button>
       </nav>
+      <FavoriteDrawer open={favoriteDrawerOpen} favorites={favoriteHospitals} onClose={() => setFavoriteDrawerOpen(false)} onExpand={() => { setFavoriteDrawerOpen(false); setFavoritePageOpen(true); }} onRemove={removeFavoriteHospital} onOpenDetail={(id) => void openFavoriteDetail(id)} />
+      <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
 
-      <section className={styles.hero} aria-labelledby="page-title">
+      <section className={`${styles.hero} ${surface === 'results' ? styles.heroResults : ''}`} aria-labelledby="page-title">
         <div className={styles.heroCopy}>
           <p className={styles.eyebrow}>演示医院信息匹配</p>
           <h1 id="page-title">找到更适合的医院信息</h1>
           <p className={styles.disclaimer}>本工具仅供查找演示医院信息，不提供诊断、治疗或疗效建议。</p>
+          {surface === 'results' && heroContext.length > 0 && <p className={styles.heroContext}>{heroContext.join('  ·  ')}</p>}
         </div>
-        <div className={styles.heroStats} aria-label="平台数据概览"><div><strong>31</strong><span>个省级行政区覆盖规划</span></div><div><strong>3</strong><span>项核心匹配维度</span></div></div>
-        <div className={styles.artwork} aria-hidden="true"><i /><b /><em /></div>
+        {surface !== 'results' && <div className={styles.heroStats} aria-label="平台数据概览"><div><strong>31</strong><span>个省级行政区覆盖规划</span></div><div><strong>3</strong><span>项核心匹配维度</span></div></div>}
+        {surface !== 'results' && <div className={styles.artwork} aria-hidden="true"><i /><b /><em /></div>}
       </section>
 
       <section id="match" className={`${styles.search} ${styles.match}`} aria-label="医院信息匹配">
         <div className={styles.panelHeading}><span>{surface === 'results' ? '02' : '01'}</span><h2>{surface === 'results' ? '医院推荐结果' : '告诉我们你的需求'}</h2></div>
         {surface !== 'results' && <form onSubmit={submitRealtime} className={styles.form}>
           <label htmlFor="query">症状或疾病</label>
-          <textarea className={styles.query} id="query" name="query" value={realtimeQuery} onChange={(event) => { realtimeScopeCacheRef.current = {}; setRealtimeQuery(event.target.value); setQuery(event.target.value); setTriageResponse(null); setClarification(null); setClarificationAnswers([]); setClarificationChoice(''); setSelectedDirection(null); setRealtimeResponse(null); }} required maxLength={500} rows={3} placeholder="例如：反复胸痛、活动后气短，或已知疾病名称" />
+          <textarea className={styles.query} id="query" name="query" value={realtimeQuery} onChange={(event) => { realtimeScopeCacheRef.current = {}; setRealtimeQuery(event.target.value); setQuery(event.target.value); setTriageResponse(null); setClarification(null); setClarificationAnswers([]); setClarificationChoice(''); setSelectedDirection(null); setSelectedResultDirectionKey(null); setRealtimeResponse(null); }} required maxLength={500} rows={3} placeholder="例如：反复胸痛、活动后气短，或已知疾病名称" />
           <div className={styles.formGrid}>
             <label htmlFor="province-main">省份<select id="province-main" value={province} onChange={(event) => selectProvince(event.target.value)} required><option value="">请选择省份</option>{Object.keys(LOCATION_TREE).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
             <label htmlFor="city-main">城市<select id="city-main" value={realtimeCity} onChange={(event) => selectCity(event.target.value)} disabled={!province} required><option value="">{province ? '请选择城市' : '请先选择省份'}</option>{cityOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
@@ -620,12 +1058,14 @@ export default function Page() {
         </form>}
         {surface !== 'results' && <div className={styles.quickTags}><span>常见就医方向：</span><button type="button" onClick={() => useQuickQuery('冠心病')}>心血管疾病</button><button type="button" onClick={() => useQuickQuery('儿童发热咳嗽')}>儿童发热咳嗽</button><button type="button" onClick={() => useQuickQuery('肿瘤治疗')}>肿瘤治疗</button><button type="button" onClick={() => useQuickQuery('关节疼痛')}>关节疼痛</button></div>}
         {surface === 'results' && triageResponse && <section className={styles.resultDirection} aria-label="疾病方向和推荐科室">
-          <div className={styles.resultDirectionHeader}><span>01</span><div><h3>你的就医方向</h3><p>{triageResponse.summary}</p></div></div>
-          <div className={styles.resultDirectionCards}>{triageResponse.directions.map((item) => <article key={item.key}><span>{item.likelihood}</span><h4>{item.title}</h4><strong>建议就诊科室：{item.department}</strong><p>可能涉及：{item.possible_diseases?.length ? item.possible_diseases.join('、') : '暂时无法判断具体疾病'}</p></article>)}</div>
+          <div className={styles.resultDirectionHeader}><span>01</span><div><h3>你的就医方向</h3><p>{triageResponse.summary}</p>{selectedResultDirection && <p className={styles.resultDirectionSelection} aria-label={`当前选择：${selectedResultDirection.title}，推荐科室：${selectedResultDirection.department}`}>当前选择：<strong>{selectedResultDirection.title}</strong> · 推荐科室：{selectedResultDirection.department}</p>}</div></div>
+          <div className={styles.resultDirectionCards} role="radiogroup" aria-label="选择疾病方向和推荐科室">{triageResponse.directions.map((item) => <button key={item.key} type="button" role="radio" aria-checked={item.key === selectedResultDirectionKey} className={item.key === selectedResultDirectionKey ? styles.resultDirectionCardSelected : ''} onClick={() => void switchResultDirection(item)}><span>疾病可能性：{formatLikelihood(item.likelihood)}</span><h4>{item.title}</h4><strong>建议就诊科室：{item.department}</strong><p>可能涉及：{item.possible_diseases?.length ? item.possible_diseases.join('、') : '暂时无法判断具体疾病'}</p></button>)}</div>
           <small>{triageResponse.disclaimer}</small>
         </section>}
         {realtimeLoading && !triageResponse && <div className={styles.loadingState} role="status" aria-live="polite"><span className={styles.loadingBars} aria-hidden="true"><i /><i /><i /></span><div><strong>正在检索公开资料</strong><p>正在根据症状、位置和排名范围整理医院信息，请稍候。</p></div></div>}
         {realtimeError && <p className={styles.notice} role="alert">{realtimeError}</p>}
+        <span id="results" className={styles.resultsAnchor} aria-hidden="true" />
+        {realtimeResponse && renderResultLocation()}
         {triageResponse && !realtimeResponse && (
           <section ref={triagePanelRef} className={styles.triagePanel} aria-labelledby="triage-title">
             {realtimeLoading && <div className={styles.triageLoading} role="status" aria-label="正在根据就医方向整理医院信息" aria-live="polite"><span className={styles.loadingBars} aria-hidden="true"><i /><i /><i /></span><div><strong>正在根据就医方向整理医院信息</strong><p>当前疾病方向和原有内容保持不变，医院结果返回后会自动更新。</p></div></div>}
@@ -665,7 +1105,7 @@ export default function Page() {
             <div className={styles.triageCards}>
               {triageResponse.directions.map((direction) => (
                 <article className={styles.triageCard} key={direction.key}>
-                  <div><span>{direction.likelihood}</span><h3>{direction.title}</h3></div>
+                  <div><span>疾病可能性：{formatLikelihood(direction.likelihood)}</span><h3>{direction.title}</h3></div>
                   <p>{direction.basis}</p>
                   <strong>建议就诊科室：{direction.department}</strong>
                   {direction.possible_diseases?.length ? <p className={styles.possibleDiseases}><b>可能涉及：</b>{direction.possible_diseases.join('、')}<small>仅作方向参考，不是医学诊断</small></p> : <p className={styles.possibleDiseases}><b>可能涉及：</b>暂时无法从当前信息判断具体疾病</p>}
@@ -676,9 +1116,25 @@ export default function Page() {
             </div>
           </section>
         )}
-        {realtimeResponse && realtimeResponse.status !== 'OK' && <><div className={styles.scopeBar} aria-busy={realtimeLoading}><div className={styles.scopeNoteRow}><p className={styles.scopeNote}>当前排名范围：{({ district: '区/县级', city: '市级', province: '省级', national: '全国' } as Record<string, string>)[scope]}。你可以直接切换其他区域范围重新检索。</p>{realtimeLoading && <span className={styles.scopeLoading} role="status">正在切换排名范围…</span>}</div><div className={styles.scopeSwitcher} role="tablist" aria-label="切换排名范围">{(['district', 'city', 'province', 'national'] as const).map((level) => <button key={level} type="button" role="tab" aria-selected={scope === level} className={scope === level ? styles.scopeActive : ''} disabled={realtimeLoading} onClick={() => void switchRealtimeScope(level)}>{({ district: '区/县级', city: '市级', province: '省级', national: '全国' } as Record<string, string>)[level]}</button>)}</div></div><p className={styles.notice}>{realtimeResponse.status === 'SEARCH_UNAVAILABLE' ? '暂时无法连接公开资料搜索服务，请稍后重试。你的输入没有问题。' : realtimeResponse.status === 'NO_RESULTS' ? '暂未找到符合当前范围的医院资料，请扩大排名范围或补充症状描述。' : '当前描述可能需要急诊处理，请优先联系 120。'}</p></>}
-        {realtimeResponse?.status === 'OK' && <><div className={styles.scopeBar} aria-busy={realtimeLoading}><div className={styles.scopeNoteRow}><p className={styles.scopeNote}>当前排名范围：{({ district: '区/县级', city: '市级', province: '省级', national: '全国' } as Record<string, string>)[realtimeResponse.scope]}。系统已按用户选择的最小地址范围检索公开资料。</p>{realtimeLoading && <span className={styles.scopeLoading} role="status">正在切换排名范围…</span>}</div><div className={styles.scopeSwitcher} role="tablist" aria-label="切换排名范围">{(['district', 'city', 'province', 'national'] as const).map((level) => <button key={level} type="button" role="tab" aria-selected={realtimeResponse.scope === level} className={realtimeResponse.scope === level ? styles.scopeActive : ''} disabled={realtimeLoading} onClick={() => void switchRealtimeScope(level)}>{({ district: '区/县级', city: '市级', province: '省级', national: '全国' } as Record<string, string>)[level]}</button>)}</div></div>{realtimeResponse.processing_notice && <p className={styles.notice}>{realtimeResponse.processing_notice}</p>}{realtimeResponse.fallback_message && <div className={styles.fallbackNotice}><span>{realtimeResponse.fallback_message}</span>{realtimeResponse.fallback_scope && <button type="button" onClick={() => void switchRealtimeScope(realtimeResponse.fallback_scope!)}>切换至更高一级范围</button>}</div>}<div className={styles.cards} aria-label="实时医院排名">{realtimeResponse.results.map(renderRealtimeCard)}</div></>}
-        {detail && <aside className={styles.detailPanel} aria-label="医院详情"><div className={styles.detailPanelHeader}><div><span className={styles.detailEyebrow}>医院资料</span><h3>{detail.name}</h3></div><button type="button" className={styles.detailClose} onClick={() => setDetail(null)}>关闭详情</button></div><div className={styles.detailIntro}><span>公开简介</span><p>{detail.introduction || '暂无医院简介公开摘要。'}</p></div><div className={styles.detailColumns}><section><h4>相关科室</h4><p>{detail.departments.length ? detail.departments.join('、') : '暂无结构化科室信息。'}</p></section><section><h4>主要医生</h4><p>{detail.doctors.length ? detail.doctors.join('、') : '暂无可靠的公开医生信息。'}</p></section></div><div className={styles.detailFooter}><a href={detail.sources?.[0]?.url || 'https://y.dxy.cn/hospital/'} target="_blank" rel="noreferrer">查看公开来源 ↗</a>{detail.official_website_url && <a href={detail.official_website_url} target="_blank" rel="noreferrer">前往官方挂号服务 ↗</a>}</div></aside>}
+        {realtimeResponse && realtimeResponse.status !== 'OK' && <>
+          <div className={styles.scopeBar} aria-busy={scopeChangeInProgress}>
+            <div className={styles.scopeNoteRow}><p className={styles.scopeNote}>当前排名范围：{SCOPE_LABELS[scope]}。你可以直接切换其他区域范围重新检索。</p></div>
+            <div className={styles.scopeSwitcher} role="tablist" aria-label="切换排名范围">{(['district', 'city', 'province', 'national'] as const).map((level) => <button key={level} type="button" role="tab" aria-selected={scope === level} className={scope === level ? styles.scopeActive : ''} disabled={realtimeLoading} onClick={() => void switchRealtimeScope(level)}>{SCOPE_LABELS[level]}</button>)}</div>
+          </div>
+          {renderScopeSwitchStatus()}
+          <p className={styles.notice}>{realtimeResponse.status === 'SEARCH_UNAVAILABLE' ? '暂时无法连接公开资料搜索服务，请稍后重试。你的输入没有问题。' : realtimeResponse.status === 'NO_RESULTS' ? '暂未找到符合当前范围的医院资料，请扩大排名范围或补充症状描述。' : '当前描述可能需要急诊处理，请优先联系 120。'}</p>
+        </>}
+        {realtimeResponse?.status === 'OK' && <>
+          <div className={styles.scopeBar} aria-busy={scopeChangeInProgress}>
+            <div className={styles.scopeNoteRow}><p className={styles.scopeNote}>当前排名范围：{SCOPE_LABELS[realtimeResponse.scope]}。系统已按用户选择的最小地址范围检索公开资料。</p></div>
+            <div className={styles.scopeSwitcher} role="tablist" aria-label="切换排名范围">{(['district', 'city', 'province', 'national'] as const).map((level) => <button key={level} type="button" role="tab" aria-selected={realtimeResponse.scope === level} className={realtimeResponse.scope === level ? styles.scopeActive : ''} disabled={realtimeLoading} onClick={() => void switchRealtimeScope(level)}>{SCOPE_LABELS[level]}</button>)}</div>
+          </div>
+          {renderScopeSwitchStatus()}
+          {realtimeResponse.processing_notice && <p className={styles.notice}>{realtimeResponse.processing_notice}</p>}
+          {realtimeResponse.fallback_message && <div className={styles.fallbackNotice}><span>{realtimeResponse.fallback_message}</span>{realtimeResponse.fallback_scope && <button type="button" onClick={() => void switchRealtimeScope(realtimeResponse.fallback_scope!)}>切换至更高一级范围</button>}</div>}
+          <div className={`${styles.cards} ${scopeChangeInProgress ? styles.resultsBusy : ''}`.trim()} aria-label="实时医院排名" aria-busy={scopeChangeInProgress} inert={scopeChangeInProgress || undefined}>{displayedRealtimeResults.map(renderRealtimeCard)}</div>
+        </>}
+        {detail && <aside className={styles.detailPanel} aria-label="医院详情"><div className={styles.detailPanelHeader}><div><span className={styles.detailEyebrow}>医院资料</span><h3>{detail.name}</h3></div><button type="button" className={styles.detailClose} onClick={() => setDetail(null)}>关闭详情</button></div><div className={styles.detailIntro}><span>公开简介</span><p>{detail.introduction || '暂无医院简介公开摘要。'}</p></div><div className={styles.detailColumns}><section><h4>相关科室</h4><p>{detail.departments.length ? detail.departments.join('、') : '暂无结构化科室信息。'}</p></section><section><h4>主要医生</h4><p>{detail.doctors.length ? detail.doctors.join('、') : '暂无可靠的公开医生信息。'}</p></section></div><div className={styles.detailFooter}><a href={detail.sources?.[0]?.url || 'https://y.dxy.cn/hospital/'} target="_blank" rel="noreferrer">查看公开来源 ↗</a>{detail.official_website_url && <a href={detail.official_website_url} target="_blank" rel="noreferrer">前往医院官网 ↗</a>}</div></aside>}
       </section>
 
       {false && (() => { const realtimeResponse = legacyRealtimeResponse!; const detail = legacyDetail!; return (<section className={styles.search} aria-labelledby="realtime-title">
@@ -698,7 +1154,7 @@ export default function Page() {
         </form>
         {realtimeError && !triageResponse && <p className={styles.notice} role="alert">{realtimeError}</p>}
         {realtimeResponse && realtimeResponse.status !== 'OK' && <p className={styles.notice}>{realtimeResponse.status === 'SEARCH_UNAVAILABLE' ? '暂时无法连接公开资料搜索服务，请稍后重试。你的输入没有问题。' : realtimeResponse.status === 'NO_RESULTS' ? '暂未找到符合当前范围的医院资料，请扩大排名范围或补充症状描述。' : '当前描述可能需要急诊处理，请优先联系 120。'}</p>}
-        {realtimeResponse?.status === 'OK' && <div className={styles.cards} aria-label="实时医院排名">{realtimeResponse.results.map(renderRealtimeCard)}</div>}
+        {realtimeResponse?.status === 'OK' && <div className={styles.cards} aria-label="实时医院排名">{displayedRealtimeResults.map(renderRealtimeCard)}</div>}
         {detail && <aside className={styles.detailPanel} aria-label="医院详情"><div className={styles.detailPanelHeader}><div><span className={styles.detailEyebrow}>医院资料</span><h3>{detail.name}</h3></div><button type="button" className={styles.detailClose} onClick={() => setDetail(null)}>关闭详情</button></div><div className={styles.detailIntro}><span>公开简介</span><p>{detail.introduction || '暂无医院简介公开摘要。'}</p></div><div className={styles.detailColumns}><section><h4>相关科室</h4><p>{detail.departments.length ? detail.departments.join('、') : '暂无结构化科室信息。'}</p></section><section><h4>主要医生</h4><p>{detail.doctors.length ? detail.doctors.join('、') : '暂无可靠的公开医生信息。'}</p></section></div>{detail.registration_url && <a className={styles.registrationLink} href={detail.registration_url || '#'} target="_blank" rel="noreferrer">前往官方挂号服务 <span aria-hidden="true">↗</span></a>}</aside>}
       </section>); })()}
 
@@ -709,7 +1165,7 @@ export default function Page() {
         <aside><b>就医前建议</b><p>推荐结果仅供信息参考，请通过医院官方渠道核实门诊与服务信息。</p></aside>
       </section>
 
-      <section className={styles.guide} aria-labelledby="guide-title">
+      <section id="guide" className={styles.guide} aria-labelledby="guide-title">
         <header><span>服务导航</span><h2 id="guide-title">把复杂选择，拆成清楚的三步</h2></header>
         <ol>
           <li><b>01</b><h3>描述情况</h3><p>输入症状、疾病或检查报告的关键结论。</p></li>
@@ -743,7 +1199,7 @@ export default function Page() {
                   className={styles.favorite}
                   aria-pressed={favorites.includes(hospital.id)}
                   aria-label={`${favorites.includes(hospital.id) ? '取消收藏' : '收藏'} ${hospital.name}`}
-                  onClick={() => toggleFavorite(hospital.id)}
+                  onClick={() => toggleFavoriteId(hospital.id)}
                 >
                   {favorites.includes(hospital.id) ? '已收藏' : '收藏'}
                 </button>

@@ -232,3 +232,23 @@ def test_persist_does_not_modify_human_verified_capability(tmp_path):
             "SELECT specialty_strength_level, verification_status FROM department_capabilities "
             "WHERE verification_status = '已核验'"
         ).fetchone() == ('国家级重点', '已核验')
+
+
+def test_persist_migrates_legacy_capability_columns_before_writing(tmp_path):
+    database = _create_official_database(tmp_path)
+    with sqlite3.connect(database) as connection:
+        connection.execute('DROP TABLE department_capabilities')
+        connection.execute('''
+            CREATE TABLE department_capabilities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hospital_id TEXT NOT NULL, department_id TEXT NOT NULL,
+                diagnosis_scope TEXT, specialty_strength_level TEXT, evidence_id INTEGER
+            )
+        ''')
+
+    report = persist_official_capabilities([_official_evidence()], path=database)
+
+    assert report.inserted == 1
+    with sqlite3.connect(database) as connection:
+        columns = {row[1] for row in connection.execute('PRAGMA table_info(department_capabilities)')}
+        assert {'evidence_summary', 'evidence_url', 'verification_status'}.issubset(columns)

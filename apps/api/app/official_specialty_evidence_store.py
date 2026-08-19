@@ -145,6 +145,9 @@ def _connect(path: Path) -> sqlite3.Connection:
 def _ensure_schema(connection: sqlite3.Connection) -> None:
     columns = {row['name'] for row in connection.execute('PRAGMA table_info(department_capabilities)')}
     for name, definition in (
+        ('evidence_summary', 'TEXT'),
+        ('evidence_url', 'TEXT'),
+        ('verification_status', 'TEXT'),
         ('evidence_fingerprint', 'TEXT'),
         ('last_verified_at', 'TEXT'),
     ):

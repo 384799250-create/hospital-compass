@@ -64,15 +64,18 @@ class BochaSearchClient:
             },
             method='POST',
         )
-        try:
-            with self._transport(request, timeout=10.0) as response:
-                if not 200 <= getattr(response, 'status', 200) < 300:
-                    return SearchResult(available=False, documents=[])
-                payload = json.loads(response.read().decode('utf-8'))
-            return SearchResult(available=True, documents=_documents_from_payload(payload))
-        except (HTTPError, OSError, TypeError, UnicodeDecodeError, URLError, json.JSONDecodeError):
-            logger.warning('bocha_search_request_failed')
-            return SearchResult(available=False, documents=[])
+        for attempt in range(2):
+            try:
+                with self._transport(request, timeout=10.0) as response:
+                    if not 200 <= getattr(response, 'status', 200) < 300:
+                        return SearchResult(available=False, documents=[])
+                    payload = json.loads(response.read().decode('utf-8'))
+                return SearchResult(available=True, documents=_documents_from_payload(payload))
+            except (HTTPError, OSError, TypeError, UnicodeDecodeError, URLError, json.JSONDecodeError):
+                if attempt == 0:
+                    continue
+                logger.warning('bocha_search_request_failed')
+        return SearchResult(available=False, documents=[])
 
 
 def _documents_from_payload(payload: object) -> list[SearchDocument]:

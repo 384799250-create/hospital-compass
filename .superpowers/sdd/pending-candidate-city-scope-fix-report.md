@@ -1,36 +1,30 @@
-# Pending candidate city-scope fix
+# Pending-candidate city-scope fix re-review
 
-## Scope
+## Verdict
 
-Backend-only validation change for AI pending candidates. No frontend files were edited.
+**Addressed.** The change in `3071b74` correctly rejects standalone district,
+county, and sub-city values while retaining city-level values. No new Critical
+or Important issue was found in `apps/api` relative to `c946cdf`.
 
-## Root cause
+## Evidence reviewed
 
-`_DETAILED_CITY_ADDRESS_PATTERN` rejected district/county markers only when a
-province or city marker preceded them. Consequently, standalone sub-city values
-such as `朝阳区`, `海淀区`, and `浦东新区` passed the candidate cleaner.
-
-## Change
-
-Added `_SUB_CITY_PATTERN = re.compile(r'(?:区|县)$')` to the pending-candidate
-city address checks. This rejects district- and county-level city values while
-leaving city-level Chinese values (for example, `北京市`) and the current English
-city values (`Beijing`, `Shanghai`, `Guangzhou`) valid. Existing detailed-address,
-hospital-suffix, prohibited-content, and medical-advice guards remain unchanged.
-
-## TDD evidence
-
-Added `test_pending_candidates_require_city_level_city_values`.
-
-- Red: `pytest -q tests/test_ai_matcher.py -k require_city_level_city_values`
-  failed because `['朝阳区', '海淀区', '浦东新区']` were returned.
-- Green: the same command passed after the validation change.
+- `_SUB_CITY_PATTERN = re.compile(r'(?:区|县)$')` is applied to
+  `candidate.city` in `_clean_pending_candidates` before a candidate is kept.
+- `test_pending_candidates_require_city_level_city_values` covers the three
+  original problematic values: `朝阳区`, `海淀区`, and `浦东新区`.
+- A direct cleaner check confirmed those values, plus district `昌平区` and
+  county `密云县`, are rejected; `北京市`, `Beijing`, `Shanghai`, and `Guangzhou`
+  are accepted. The direct check is needed for `Guangzhou` because the public
+  response intentionally retains at most three valid pending candidates.
 
 ## Verification
 
 From `apps/api`:
 
 ```text
+pytest -q tests/test_ai_matcher.py -k require_city_level_city_values
+1 passed, 49 deselected
+
 pytest -q
 132 passed in 0.64s
 ```

@@ -1,5 +1,6 @@
 import json
 import logging
+from urllib.error import URLError
 from datetime import UTC, datetime
 
 from app.bocha_search import BochaSearchClient
@@ -47,6 +48,24 @@ def test_bearer_request_uses_key_without_logging_secret(caplog):
     assert result.available is True
     assert captured == {'authorization': f'Bearer {secret}', 'timeout': 10.0}
     assert secret not in caplog.text
+
+
+def test_search_retries_one_transient_provider_failure():
+    attempts = 0
+
+    def transport(request, timeout):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise URLError('temporary failure')
+        return FakeResponse({'data': {'webPages': {'value': []}}})
+
+    result = BochaSearchClient(
+        settings={'BOCHA_API_KEY': 'test-key'}, transport=transport,
+    ).search('cardiology')
+
+    assert result.available is True
+    assert attempts == 2
 
 
 def test_search_caps_requested_result_count_at_ten():
@@ -106,7 +125,7 @@ def test_nonofficial_urls_are_never_marked_as_registration_links():
     assert candidate.sources[0].url == 'https://directory.example.org/example-hospital'
 
 
-def test_same_hospital_and_city_merge_and_keep_newest_source_record():
+def test_same_hospital_and_city_merge_retains_distinct_sources():
     older = HospitalCandidate.from_document(
         name='Example Hospital', city='Shenzhen', document={
             'title': 'Example Hospital',
@@ -127,7 +146,10 @@ def test_same_hospital_and_city_merge_and_keep_newest_source_record():
     merged = merge_hospital_candidates([older, newer])
 
     assert len(merged) == 1
-    assert [source.url for source in merged[0].sources] == ['https://www.example-hospital.cn/new']
+    assert [source.url for source in merged[0].sources] == [
+        'https://www.example-hospital.cn/new',
+        'https://www.example-hospital.cn/old',
+    ]
 
 
 def test_merge_keeps_valid_candidate_with_empty_sources_without_raising():
