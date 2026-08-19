@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -52,6 +53,19 @@ from app.realtime_search import HospitalCandidate
 
 logger = logging.getLogger(__name__)
 app = FastAPI()
+_frontend_origins = [
+    origin.strip()
+    for origin in os.environ.get('FRONTEND_ORIGIN', '').split(',')
+    if origin.strip()
+]
+if _frontend_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_frontend_origins,
+        allow_credentials=False,
+        allow_methods=['GET', 'POST', 'PATCH', 'OPTIONS'],
+        allow_headers=['Content-Type', 'X-Feedback-Admin-Token'],
+    )
 HOSPITAL_DIRECTORY_PATH = initialize_hospital_store()
 IMPORT_COLUMNS = (
     'id', 'name', 'city', 'tier', 'source_url', 'source_date',
