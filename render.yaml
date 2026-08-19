@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: hospital-compass-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: hospital-compass-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_MODEL
+        value: deepseek-chat
+      - key: ANYSEARCH_API_KEY
+        sync: false
+      - key: BOCHA_API_KEY
+        sync: false
+      - key: FEEDBACK_ADMIN_TOKEN
+        sync: false
+      - key: HOSPITAL_COMPASS_DATABASE_PATH
+        value: /data/hospital_database.db
+      - key: HOSPITAL_COMPASS_TERTIARY_DATABASE_PATH
+        value: /data/hospital_database.db
+      - key: FEEDBACK_DATABASE_PATH
+        value: /data/feedback.sqlite3

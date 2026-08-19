@@ -21,3 +21,4 @@ test-results/
 output/
 backups/
 work/review/
+.vercel/
