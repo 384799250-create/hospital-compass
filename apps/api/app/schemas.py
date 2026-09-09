@@ -1,6 +1,6 @@
 import base64
 import binascii
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
 
@@ -100,4 +100,20 @@ class RealtimeSearchRequest(BaseModel):
     def query_must_not_be_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError('query must not be blank')
+        return value
+
+
+class MediaTaskRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    model: StrictStr = Field(min_length=1, max_length=160)
+    prompt: StrictStr = Field(min_length=1, max_length=4000)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator('model', 'prompt')
+    @classmethod
+    def media_text_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError('media text must not be blank')
         return value

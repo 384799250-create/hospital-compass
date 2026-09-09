@@ -26,6 +26,12 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Vite proxies `/v1/*` and `/health` to the API, so the browser uses same-origin requests during local development.
 
+## Qinglin media studio
+
+Set `QINGLIN_API_KEY` in `apps/api/.env` or in the server environment. The key is read only by FastAPI and is never sent to the browser. Start both services, then open `http://127.0.0.1:5173/media` to discover available Qinglin image/video models, check balance, submit a prompt, and preview the asynchronous result.
+
+The media routes are `/v1/media/models`, `/v1/media/models/{model_name}`, `/v1/media/balance`, `/v1/media/tasks`, and `/v1/media/tasks/{task_id}`. Generation is blocked when the Qinglin balance is empty.
+
 To check the production bundle locally, run `npm run build` followed by `npm start`; the preview server listens on `127.0.0.1:4173` and uses the same API proxy. Run `npm test -- --run` and `npm run typecheck` for the web verification gates.
 
 ## Privacy and local data

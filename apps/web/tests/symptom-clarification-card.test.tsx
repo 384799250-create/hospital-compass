@@ -52,7 +52,7 @@ describe('symptom clarification card', () => {
     expect(await screen.findByRole('region', { name: '补充确认问题' })).toBeTruthy();
     expect(screen.getByText('你主要是哪里不舒服？')).toBeTruthy();
     expect(screen.getByText(/第 1 题 · 预计共 1-3 个问题/)).toBeTruthy();
-    expect(screen.getAllByRole('radio')).toHaveLength(7);
+    expect(screen.getAllByRole('checkbox')).toHaveLength(7);
     expect((screen.getByRole('button', { name: '继续' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -84,7 +84,7 @@ describe('symptom clarification card', () => {
       }],
     });
 
-    await user.click(screen.getByRole('radio', { name: '不确定' }));
+    await user.click(screen.getByRole('checkbox', { name: '不确定' }));
     await user.click(screen.getByRole('button', { name: '继续' }));
 
     expect(clarifySymptoms).toHaveBeenLastCalledWith({
@@ -105,7 +105,7 @@ describe('symptom clarification card', () => {
       status: 'EMERGENCY', question: null, progress: { current: 1, total: 1 }, directions: [], urgent_warning: '请立即拨打120或前往急诊。',
     });
 
-    await user.click(screen.getByRole('radio', { name: '胸口' }));
+    await user.click(screen.getByRole('checkbox', { name: '胸口' }));
     await user.click(screen.getByRole('button', { name: '继续' }));
 
     expect(screen.getAllByRole('alert').some((node) => node.textContent?.includes('请立即拨打120或前往急诊。'))).toBe(true);
@@ -121,7 +121,7 @@ describe('symptom clarification card', () => {
       }],
     });
 
-    await user.click(screen.getByRole('radio', { name: '以上都不符合，我自己填写' }));
+    await user.click(screen.getByRole('checkbox', { name: '以上都不符合，我自己填写' }));
     const customInput = screen.getByRole('textbox', { name: '自己填写' });
     await user.type(customInput, '胸口左边像针扎一样，活动时更明显');
     await user.click(screen.getByRole('button', { name: '继续' }));

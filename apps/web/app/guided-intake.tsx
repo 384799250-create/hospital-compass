@@ -16,6 +16,7 @@ import provinceData from '../data/province.json';
 import cityData from '../data/city.json';
 import areaData from '../data/area.json';
 import styles from './page.module.css';
+import LegalFooter from './legal-footer';
 
 type RegionRow = { code: string; name: string; province: string; city?: string; area?: string };
 type LocationTree = Record<string, Record<string, string[]>>;
@@ -87,7 +88,7 @@ export default function GuidedIntake({ onComplete, onEmergency, onBackToLanding 
   const [answers, setAnswers] = useState<SymptomClarificationAnswer[]>([]);
   const [questionHistory, setQuestionHistory] = useState<SymptomClarificationResponse[]>([]);
   const [pendingAnswer, setPendingAnswer] = useState<SymptomClarificationAnswer | null>(null);
-  const [choice, setChoice] = useState('');
+  const [choices, setChoices] = useState<string[]>([]);
   const [customAnswer, setCustomAnswer] = useState('');
   const [selectedDirectionKey, setSelectedDirectionKey] = useState<string | null>(null);
   const [province, setProvince] = useState('');
@@ -119,7 +120,7 @@ export default function GuidedIntake({ onComplete, onEmergency, onBackToLanding 
     setQuestionHistory([]);
     setClarification(null);
     setPendingAnswer(null);
-    setChoice('');
+    setChoices([]);
     setCustomAnswer('');
     setLoading(true);
     try {
@@ -178,7 +179,7 @@ export default function GuidedIntake({ onComplete, onEmergency, onBackToLanding 
       setAnswers(nextAnswers);
       setQuestionHistory([...questionHistory, currentQuestion]);
       setPendingAnswer(null);
-      setChoice('');
+      setChoices([]);
       setCustomAnswer('');
       if (next.status === 'EMERGENCY') {
         setError(next.urgent_warning);
@@ -205,10 +206,14 @@ export default function GuidedIntake({ onComplete, onEmergency, onBackToLanding 
   }
 
   async function answerClarification() {
-    if (!clarification?.question || !choice) return;
-    const value = choice === CUSTOM_OPTION ? customAnswer.trim() : choice;
-    if (!value) return;
-    await continueClarification({ question_id: clarification.question.id, value });
+    if (!clarification?.question || !choices.length) return;
+    const selectedValues = choices.includes(CUSTOM_OPTION) ? [customAnswer.trim()] : choices;
+    if (!selectedValues.every(Boolean)) return;
+    await continueClarification({
+      question_id: clarification.question.id,
+      value: selectedValues.join('；'),
+      ...(selectedValues.length > 1 ? { values: selectedValues } : {}),
+    });
   }
 
   function selectProvince(value: string) {
@@ -249,12 +254,13 @@ export default function GuidedIntake({ onComplete, onEmergency, onBackToLanding 
     const previousAnswer = answers.at(-1);
     if (!previousQuestion?.question || !previousAnswer) return false;
 
-    const isListedAnswer = previousQuestion.question.options.includes(previousAnswer.value);
+    const previousValues = previousAnswer.values ?? [previousAnswer.value];
+    const isListedAnswer = previousValues.every((value) => previousQuestion.question!.options.includes(value));
     setAnswers(answers.slice(0, -1));
     setQuestionHistory(questionHistory.slice(0, -1));
     setClarification(previousQuestion);
     setPendingAnswer(null);
-    setChoice(isListedAnswer ? previousAnswer.value : CUSTOM_OPTION);
+    setChoices(isListedAnswer ? previousValues : [CUSTOM_OPTION]);
     setCustomAnswer(isListedAnswer ? '' : previousAnswer.value);
     setSelectedDirectionKey(null);
     setStage('clarification');
@@ -272,7 +278,7 @@ export default function GuidedIntake({ onComplete, onEmergency, onBackToLanding 
       setPendingAnswer(null);
       setAnswers([]);
       setQuestionHistory([]);
-      setChoice('');
+      setChoices([]);
       setCustomAnswer('');
     } else if (stage === 'direction') {
       if (!restorePreviousQuestion()) setStage('symptom');
@@ -311,21 +317,26 @@ export default function GuidedIntake({ onComplete, onEmergency, onBackToLanding 
         {stage === 'clarification' && clarification?.question && <section className={styles.guidedStage} aria-label="补充确认问题">
           <span className={styles.guidedKicker}>再确认一件事</span>
           <h1 id="guided-title">{clarification.question.text}</h1>
-          <p className={styles.guidedLead}>选最接近的情况就好，不确定也可以告诉我。</p>
+          <p className={styles.guidedLead}>可多选；不确定或自己填写时，请单独选择。</p>
           {questionEstimate && <div className={styles.guidedProgressRow}>
             <span className={styles.guidedProgress}>第 {clarification.progress.current} 题 · 预计共 {questionEstimate} 个问题</span>
             <small>AI 会根据你的回答动态调整</small>
           </div>}
           {loading && renderThinkingStatus('AI 正在根据你的回答调整问题，请稍候')}
-          <div className={styles.guidedOptions} role="radiogroup" aria-label={clarification.question.text}>
-            {[...clarification.question.options, CUSTOM_OPTION].map((option) => <label key={option} className={choice === option ? styles.guidedOptionSelected : styles.guidedOption}>
-              <input type="radio" name="guided-clarification" value={option} checked={choice === option} onChange={() => { setPendingAnswer(null); setChoice(option); if (option !== CUSTOM_OPTION) setCustomAnswer(''); }} />
+          <div className={styles.guidedOptions} role="group" aria-label={clarification.question.text}>
+            {[...clarification.question.options, CUSTOM_OPTION].map((option) => <label key={option} className={choices.includes(option) ? styles.guidedOptionSelected : styles.guidedOption}>
+              <input type="checkbox" name="guided-clarification" value={option} checked={choices.includes(option)} onChange={() => {
+                setPendingAnswer(null);
+                const isExclusive = option === '不确定' || option === CUSTOM_OPTION;
+                setChoices((current) => isExclusive ? (current.includes(option) ? [] : [option]) : (current.includes(option) ? current.filter((item) => item !== option) : [...current.filter((item) => item !== '不确定' && item !== CUSTOM_OPTION), option]));
+                if (option !== CUSTOM_OPTION) setCustomAnswer('');
+              }} />
               <span>{option}</span>
             </label>)}
           </div>
-          {choice === CUSTOM_OPTION && <label className={styles.guidedCustom} htmlFor="guided-custom">自己填写<textarea id="guided-custom" aria-label="自己填写" value={customAnswer} onChange={(event) => { setPendingAnswer(null); setCustomAnswer(event.target.value); }} rows={3} placeholder="用一句话补充你的情况" /></label>}
+          {choices.includes(CUSTOM_OPTION) && <label className={styles.guidedCustom} htmlFor="guided-custom">自己填写<textarea id="guided-custom" aria-label="自己填写" value={customAnswer} onChange={(event) => { setPendingAnswer(null); setCustomAnswer(event.target.value); }} rows={3} placeholder="用一句话补充你的情况" /></label>}
           {error && <p className={styles.guidedError} role="alert">{error}</p>}
-          <button className={styles.guidedPrimary} type="button" onClick={() => void (pendingAnswer ? continueClarification(pendingAnswer) : answerClarification())} disabled={loading || !choice || (choice === CUSTOM_OPTION && !customAnswer.trim())}>{loading ? '正在整理…' : error ? '重试' : '继续'}</button>
+          <button className={styles.guidedPrimary} type="button" onClick={() => void (pendingAnswer ? continueClarification(pendingAnswer) : answerClarification())} disabled={loading || !choices.length || (choices.includes(CUSTOM_OPTION) && !customAnswer.trim())}>{loading ? '正在整理…' : error ? '重试' : '继续'}</button>
         </section>}
 
         {stage === 'direction' && triage && <section className={styles.guidedStage} aria-label="疾病方向和推荐科室">
@@ -375,6 +386,7 @@ export default function GuidedIntake({ onComplete, onEmergency, onBackToLanding 
           <button className={styles.guidedPrimary} type="submit" disabled={loading || !direction || !province || !city}>{loading ? '正在推荐医院…' : '开始推荐医院'}</button>
         </form>}
       </section>
+      <LegalFooter />
     </main>
   );
 }

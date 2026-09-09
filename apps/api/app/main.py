@@ -23,7 +23,7 @@ from app.matcher import is_public_record, match
 from app.data import verified_row_to_hospital
 from app.importer import load_verified_beijing_rows
 from app.importer import validate_import
-from app.schemas import AIMatchRequest, FeedbackAdminSession, FeedbackStatusUpdate, FeedbackSubmission, Location, MatchRequest, RealtimeSearchRequest
+from app.schemas import AIMatchRequest, FeedbackAdminSession, FeedbackStatusUpdate, FeedbackSubmission, Location, MatchRequest, MediaTaskRequest, RealtimeSearchRequest
 from app.anysearch import AnySearchClient, prefer_search_result
 from app.realtime_search import _expanded_specialty_terms, _source_capability_evidence, candidate_from_document, merge_hospital_candidates, normalize_hospital_name, normalize_result_specialty_score, rank_candidates
 from app import web_ranker
@@ -50,6 +50,7 @@ from app.triage import TriageResponse, triage_symptoms
 from app.symptom_clarification import ClarificationUnavailableError, clarify_symptoms
 from app.bocha_search import BochaSearchClient, SearchDocument
 from app.realtime_search import HospitalCandidate
+from app.qinglin_client import QinglinClient, QinglinError
 
 logger = logging.getLogger(__name__)
 app = FastAPI()
@@ -83,6 +84,28 @@ REALTIME_SEARCH_BUDGET = HourlySearchBudget(
     limit=int(os.environ.get('BOCHA_MAX_CALLS_PER_HOUR', '60')),
 )
 FEEDBACK_SUBMISSION_TIMES: dict[str, list[float]] = {}
+
+
+def _qinglin_client() -> QinglinClient:
+    return QinglinClient()
+
+
+def _qinglin_http_error(exc: QinglinError) -> HTTPException:
+    message = str(exc)
+    status = 503 if 'not configured' in message.lower() or 'temporarily unavailable' in message.lower() else 502
+    return HTTPException(status_code=status, detail=message)
+
+
+def _balance_is_available(balance: dict[str, object]) -> bool:
+    for key in ('balance', 'available_balance', 'credits', 'remaining'):
+        value = balance.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value) > 0
+        except (TypeError, ValueError):
+            return False
+    return True
 
 
 def _directory_fallback_candidates(request: RealtimeSearchRequest) -> list[HospitalCandidate]:
@@ -556,6 +579,55 @@ async def health():
             'database_path': tertiary_database_path().as_posix(),
         },
     }
+
+
+@app.get('/v1/media/models')
+async def media_models(type: str = Query(..., pattern='^(image|video)$')):
+    try:
+        return {'type': type, 'models': _qinglin_client().list_models(type)}
+    except QinglinError as exc:
+        raise _qinglin_http_error(exc) from exc
+
+
+@app.get('/v1/media/models/{model_name}')
+async def media_model_detail(model_name: str):
+    try:
+        return _qinglin_client().model_detail(model_name)
+    except QinglinError as exc:
+        raise _qinglin_http_error(exc) from exc
+
+
+@app.get('/v1/media/balance')
+async def media_balance():
+    try:
+        return _qinglin_client().balance()
+    except QinglinError as exc:
+        raise _qinglin_http_error(exc) from exc
+
+
+@app.post('/v1/media/tasks', status_code=202)
+async def media_create_task(payload: MediaTaskRequest):
+    try:
+        client = _qinglin_client()
+        balance = client.balance()
+        if not _balance_is_available(balance):
+            raise HTTPException(status_code=402, detail='Qinglin balance is insufficient')
+        task_id = client.create_task(payload.model, payload.prompt, payload.params)
+        return {'task_id': task_id, 'status': 'queued'}
+    except HTTPException:
+        raise
+    except QinglinError as exc:
+        raise _qinglin_http_error(exc) from exc
+
+
+@app.get('/v1/media/tasks/{task_id}')
+async def media_task_status(task_id: str):
+    if not task_id.strip() or len(task_id) > 200:
+        raise HTTPException(status_code=400, detail='Invalid media task id')
+    try:
+        return _qinglin_client().task_status(task_id)
+    except QinglinError as exc:
+        raise _qinglin_http_error(exc) from exc
 
 
 def _require_feedback_admin(request: Request) -> str:

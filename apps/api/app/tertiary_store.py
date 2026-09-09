@@ -64,6 +64,10 @@ def tertiary_rows(*, province: str = '', city: str = '', district: str = '', pat
     target = path or tertiary_database_path()
     if target.exists():
         with sqlite3.connect(f'file:{target}?mode=ro', uri=True) as connection:
+            # Read-only databases on Windows may not be able to create SQLite's
+            # temporary sort files beside the database. Keep temporary query
+            # data in memory so directory listings and ORDER BY remain usable.
+            connection.execute('PRAGMA temp_store = MEMORY')
             connection.row_factory = sqlite3.Row
             columns = {row[1] for row in connection.execute('PRAGMA table_info(hospitals)')}
             if {'hospital_id', 'grade', 'operating_status'} <= columns:

@@ -12,6 +12,8 @@ import FeedbackDialog from './feedback-dialog';
 import GuidedIntake, { GuidedSearchInput } from './guided-intake';
 import UsageGuidePage from './usage-guide';
 import HospitalDirectoryPage from './hospital-directory';
+import LegalFooter from './legal-footer';
+import MediaStudio from './media-studio';
 import styles from './page.module.css';
 import provinceData from '../data/province.json';
 import cityData from '../data/city.json';
@@ -185,6 +187,10 @@ export default function Page() {
   const triagePanelRef = useRef<HTMLElement>(null);
   const scopeBarRef = useRef<HTMLDivElement>(null);
   const pendingScopeScrollRef = useRef(false);
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/media') {
+    return <MediaStudio />;
+  }
 
   useEffect(() => {
     const profile = getProfile();
@@ -787,7 +793,7 @@ export default function Page() {
         <p className={styles.landingDescription}>医途会用简单的问题帮你确认疾病方向和推荐科室，再结合所在地整理医院列表与综合评分。</p>
         <button className={styles.landingStart} type="button" onClick={() => setSurface('guided')}>开始使用</button>
       </section>
-      <footer className={styles.landingFooter}><span>公开资料整理</span><span>仅供就医信息参考</span><span>不替代医生诊断</span></footer>
+      <LegalFooter />
     </main>;
   }
 
@@ -820,6 +826,7 @@ export default function Page() {
         </section>}
       </section>
       <FavoriteDrawer open={favoriteDrawerOpen} favorites={favoriteHospitals} onClose={() => setFavoriteDrawerOpen(false)} onExpand={() => setFavoriteDrawerOpen(false)} onRemove={removeFavoriteHospital} onOpenDetail={(id) => void openFavoriteDetail(id)} />
+      <LegalFooter />
     </main>;
   }
 
@@ -1265,6 +1272,7 @@ export default function Page() {
           <button ref={acknowledgementRef} type="button" onClick={closeEmergency}>我已了解，仍查看医院信息</button>
         </dialog>
       )}
+      <LegalFooter />
     </main>
   );
 }

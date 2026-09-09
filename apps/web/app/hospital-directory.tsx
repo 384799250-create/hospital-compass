@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { getHospitalDirectory, MatchApiError, RealtimeHospitalResult } from '../lib/api';
 import styles from './hospital-directory.module.css';
+import LegalFooter from './legal-footer';
 
 const PAGE_SIZE = 25;
 
@@ -94,12 +95,7 @@ export default function HospitalDirectoryPage() {
           <button type="button" onClick={() => setPage((current) => Math.min(pageCount, current + 1))} disabled={page >= pageCount}>下一页</button>
         </nav>}
 
-        <footer className={styles.footer}>
-          <span>公开资料整理</span>
-          <span>仅供就医信息参考</span>
-          <span>不替代医生诊断</span>
-          <a href="/">返回首页</a>
-        </footer>
+        <LegalFooter showHomeLink />
       </div>
     </main>
   );

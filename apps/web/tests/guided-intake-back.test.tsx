@@ -52,15 +52,16 @@ describe('clarification question history', () => {
     await user.type(screen.getByRole('textbox', { name: /\u75c7\u72b6/ }), '\u4e0d\u8212\u670d');
     await user.click(screen.getByRole('button', { name: '\u7ee7\u7eed' }));
 
-    await user.click(screen.getByRole('radio', { name: '\u9009\u9879A' }));
+    await user.click(screen.getByRole('checkbox', { name: '\u9009\u9879A' }));
     await user.click(screen.getByRole('button', { name: '\u7ee7\u7eed' }));
     expect(await screen.findByText('\u7b2c\u4e8c\u4e2a\u95ee\u9898')).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: '\u8fd4\u56de\u4e0a\u4e00\u9898' }));
     expect(await screen.findByText('\u7b2c\u4e00\u4e2a\u95ee\u9898')).toBeTruthy();
-    expect((screen.getByRole('radio', { name: '\u9009\u9879A' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('checkbox', { name: '\u9009\u9879A' }) as HTMLInputElement).checked).toBe(true);
 
-    await user.click(screen.getByRole('radio', { name: '\u9009\u9879B' }));
+    await user.click(screen.getByRole('checkbox', { name: '\u9009\u9879A' }));
+    await user.click(screen.getByRole('checkbox', { name: '\u9009\u9879B' }));
     await user.click(screen.getByRole('button', { name: '\u7ee7\u7eed' }));
     expect(await screen.findByText('\u6839\u636e\u4fee\u6539\u540e\u7684\u7b2c\u4e8c\u4e2a\u95ee\u9898')).toBeTruthy();
     expect(vi.mocked(clarifySymptoms)).toHaveBeenLastCalledWith({

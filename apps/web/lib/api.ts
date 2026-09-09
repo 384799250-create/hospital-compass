@@ -137,7 +137,7 @@ export type TriageResponse = {
   explicit_disease_input?: boolean;
 };
 
-export type SymptomClarificationAnswer = { question_id: string; value: string };
+export type SymptomClarificationAnswer = { question_id: string; value: string; values?: string[] };
 export type SymptomClarificationAskedQuestion = { id: string; text: string; options: string[] };
 export type SymptomClarificationResponse = {
   status: 'NEEDS_CLARIFICATION' | 'COMPLETE' | 'EMERGENCY';
@@ -162,6 +162,16 @@ export type RealtimeHospitalDetail = {
   wechat_appointment?: string | null;
   sources: RealtimeHospitalResult['sources'];
   fetched_at: string;
+};
+
+export type MediaType = 'image' | 'video';
+export type MediaModel = { name: string; label?: string; description?: string; [key: string]: unknown };
+export type MediaTaskStatus = {
+  is_final: boolean;
+  state?: string;
+  result_url?: string | null;
+  error?: string | null;
+  [key: string]: unknown;
 };
 
 type MatchInput = {
@@ -278,4 +288,36 @@ export async function updateAdminFeedback(token: string, feedbackId: string, sta
   });
   if (!response.ok) throw new MatchApiError(response.status);
   return response.json() as Promise<FeedbackItem>;
+}
+
+export async function getMediaModels(type: MediaType): Promise<MediaModel[]> {
+  const response = await fetch(apiUrl(`/v1/media/models?type=${type}`));
+  if (!response.ok) throw new MatchApiError(response.status);
+  return ((await response.json()) as { models: MediaModel[] }).models;
+}
+
+export async function getMediaModelDetail(model: string): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl(`/v1/media/models/${encodeURIComponent(model)}`));
+  if (!response.ok) throw new MatchApiError(response.status);
+  return response.json() as Promise<Record<string, unknown>>;
+}
+
+export async function getMediaBalance(): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl('/v1/media/balance'));
+  if (!response.ok) throw new MatchApiError(response.status);
+  return response.json() as Promise<Record<string, unknown>>;
+}
+
+export async function createMediaTask(input: { model: string; prompt: string; params: Record<string, unknown> }): Promise<{ task_id: string; status: string }> {
+  const response = await fetch(apiUrl('/v1/media/tasks'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new MatchApiError(response.status);
+  return response.json() as Promise<{ task_id: string; status: string }>;
+}
+
+export async function getMediaTaskStatus(taskId: string): Promise<MediaTaskStatus> {
+  const response = await fetch(apiUrl(`/v1/media/tasks/${encodeURIComponent(taskId)}`));
+  if (!response.ok) throw new MatchApiError(response.status);
+  return response.json() as Promise<MediaTaskStatus>;
 }

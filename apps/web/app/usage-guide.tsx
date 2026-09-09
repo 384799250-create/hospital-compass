@@ -1,4 +1,5 @@
 import styles from './usage-guide.module.css';
+import LegalFooter from './legal-footer';
 
 const sections = [
   ['使用流程', 'flow'],
@@ -128,12 +129,7 @@ export default function UsageGuidePage() {
           </aside>
         </div>
 
-        <footer className={styles.footer}>
-          <span>公开资料整理</span>
-          <span>仅供就医信息参考</span>
-          <span>不替代医生诊断</span>
-          <a href="/">返回首页</a>
-        </footer>
+        <LegalFooter showHomeLink />
       </div>
     </main>
   );

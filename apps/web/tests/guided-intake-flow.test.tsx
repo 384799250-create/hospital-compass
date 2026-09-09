@@ -148,7 +148,7 @@ describe('guided medical entry flow', () => {
     await user.click(screen.getByRole('button', { name: '开始使用' }));
     await user.type(screen.getByRole('textbox', { name: '症状或疾病' }), '持续胸闷');
     await user.click(screen.getByRole('button', { name: '继续' }));
-    await user.click(screen.getByRole('radio', { name: '几天了' }));
+    await user.click(screen.getByRole('checkbox', { name: '几天了' }));
     await user.click(screen.getByRole('button', { name: '继续' }));
 
     expect(await screen.findByText('心血管相关疾病方向')).toBeTruthy();
@@ -210,14 +210,14 @@ describe('guided medical entry flow', () => {
     await user.click(screen.getByRole('button', { name: '继续' }));
 
     expect(await screen.findByText('你主要是哪里不舒服？')).toBeTruthy();
-    await user.click(screen.getByRole('radio', { name: '不确定' }));
+    await user.click(screen.getByRole('checkbox', { name: '不确定' }));
     await user.click(screen.getByRole('button', { name: '继续' }));
 
     expect(await screen.findByText('这种不舒服大概多久了？')).toBeTruthy();
     expect(screen.getByText(/第 2 题 · 预计共 2-4 个问题/)).toBeTruthy();
     expect(screen.queryByText('需要进一步评估的健康问题')).toBeNull();
 
-    await user.click(screen.getByRole('radio', { name: '刚开始' }));
+    await user.click(screen.getByRole('checkbox', { name: '刚开始' }));
     await user.click(screen.getByRole('button', { name: '继续' }));
 
     expect(await screen.findByText('需要进一步评估的健康问题')).toBeTruthy();
@@ -231,6 +231,39 @@ describe('guided medical entry flow', () => {
         { id: 'location', text: '你主要是哪里不舒服？', options: ['胸口', '肚子', '其他', '不确定'] },
         { id: 'duration', text: '这种不舒服大概多久了？', options: ['刚开始', '几天了', '不确定'] },
       ],
+      ai_consent: true,
+    });
+  });
+
+  it('submits every selected clarification option together', async () => {
+    const user = userEvent.setup();
+    vi.mocked(triageSymptoms).mockResolvedValue({
+      summary: '需要补充信息',
+      directions: [{ key: 'general', title: '待确认方向', likelihood: '待评估', basis: '信息不足', department: '全科医学科', urgent_warning: '' }],
+      urgent_warning: '', disclaimer: '仅作健康信息整理，不是医学诊断。', is_diagnosis: false, ai_used: true,
+    });
+    vi.mocked(clarifySymptoms)
+      .mockResolvedValueOnce({
+        status: 'NEEDS_CLARIFICATION',
+        question: { id: 'lifestyle', text: '你的生活方式是否有以下特点？', type: 'single', options: ['经常熬夜或压力大', '饮食油腻', '不确定'] },
+        progress: { current: 1, total: 1 }, directions: [], urgent_warning: '',
+      })
+      .mockResolvedValueOnce({
+        status: 'COMPLETE', question: null, progress: { current: 1, total: 1 }, directions: [], urgent_warning: '',
+      });
+
+    render(<Page />);
+    await user.click(screen.getByRole('button', { name: '开始使用' }));
+    await user.type(screen.getByRole('textbox', { name: '症状或疾病' }), '头发容易出油');
+    await user.click(screen.getByRole('button', { name: '继续' }));
+    await user.click(screen.getByRole('checkbox', { name: '经常熬夜或压力大' }));
+    await user.click(screen.getByRole('checkbox', { name: '饮食油腻' }));
+    await user.click(screen.getByRole('button', { name: '继续' }));
+
+    expect(clarifySymptoms).toHaveBeenLastCalledWith({
+      query: '头发容易出油',
+      answers: [{ question_id: 'lifestyle', value: '经常熬夜或压力大；饮食油腻', values: ['经常熬夜或压力大', '饮食油腻'] }],
+      asked_questions: [{ id: 'lifestyle', text: '你的生活方式是否有以下特点？', options: ['经常熬夜或压力大', '饮食油腻', '不确定'] }],
       ai_consent: true,
     });
   });
@@ -277,12 +310,12 @@ describe('guided medical entry flow', () => {
     await user.click(screen.getByRole('button', { name: '开始使用' }));
     await user.type(screen.getByRole('textbox', { name: '症状或疾病' }), '不舒服');
     await user.click(screen.getByRole('button', { name: '继续' }));
-    await user.click(screen.getByRole('radio', { name: '不确定' }));
+    await user.click(screen.getByRole('checkbox', { name: '不确定' }));
     await user.click(screen.getByRole('button', { name: '继续' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('智能整理服务暂时不可用，请重试。');
-    expect((screen.getByRole('radio', { name: '不确定' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('checkbox', { name: '不确定' }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole('button', { name: '重试' })).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: '重试' }));
