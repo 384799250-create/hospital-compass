@@ -2,9 +2,13 @@
 
 Hospital Compass is a hospital-information navigation demonstration. It does not provide diagnosis, treatment, efficacy, or “best hospital” claims.
 
+## Reproduce this project
+
+Read [医途项目复刻指南](REPLICATION_GUIDE.md) before setting up a new machine or deployment. It lists the hospital data, API accounts, environment variables, paths, ports, domains, and operating requirements you must supply or adjust. A [database table/index schema](docs/database-schema.sql) is included without records; the full hospital database and personal service credentials are not bundled. The [public deployment handoff](PROJECT_HANDOFF_PUBLIC.md) provides additional architecture context.
+
 ## Data and safety limits
 
-The in-memory demonstration fixtures are labelled **DEMO DATA** and are not part of the public API dataset. The API's current public dataset contains one verified Beijing public record sourced from `app/data/verified_beijing_hospitals.csv`; it is labelled **已核验公开信息**, is not a comprehensive hospital directory or recommendation, and should still be checked against the linked official source before use. The matching form is not medical advice. Symptom text is processed only for the request and is neither logged nor stored in the browser profile.
+The in-memory demonstration fixtures are labelled **DEMO DATA** and are not part of the public API dataset. The basic matching API's bundled public dataset contains two verified Beijing public records sourced from `app/data/verified_beijing_hospitals.csv`; they are labelled **已核验公开信息**, are not a comprehensive hospital directory or recommendation, and should still be checked against the linked official sources before use. The hospital directory and realtime search also use an externally supplied SQLite hospital database. The matching form is not medical advice. Symptom text is processed only for the request and is neither logged nor stored in the browser profile.
 
 ## Start locally
 
@@ -44,7 +48,7 @@ Use `POST /admin/import-preview` with UTF-8 CSV text to validate, in memory only
 
 Operator sequence: preview → source verification → reviewer approval → publication. The current 30 pilot hospital records are unverified, unpublished drafts. They are not public and do not enter matching until they have been verified and approved for publication.
 
-`app/data/pilot_hospitals.csv` is used only for draft import testing. `app/data/verified_beijing_hospitals.csv` is the API's only current public data source. Every record in that file must be for Beijing, set `verified=true` and `published=true`, use an HTTPS source, and have a source date within the preceding 180 days.
+`app/data/pilot_hospitals.csv` is used only for draft import testing. `app/data/verified_beijing_hospitals.csv` is the bundled publish list for the basic matching API; it does not initialize the external hospital directory database. Every record in that file must be for Beijing, set `verified=true` and `published=true`, use an HTTPS source, and have a source date within the preceding 180 days.
 
 ## Production operating requirements
 

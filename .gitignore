@@ -22,3 +22,5 @@ output/
 backups/
 work/review/
 .vercel/
+runtime-data/
+runtime-test-data/
